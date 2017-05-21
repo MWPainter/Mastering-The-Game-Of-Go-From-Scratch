@@ -25,12 +25,12 @@ and will return a map from actions to weights (this defines a probability distri
 
 class TreeNode(object):
     def __init__(self, state, weight, parent = None):
-        self.state = state # state being represented as this 
-        self.value = 0.0 # average value witnessed at this state
-        self.numVisits = 0 # times visited node
-        self.children = {} # a dictionary of (action -> successor tree node) values
-        self.weight = float(weight) # weight of selecting this node from parent originally
-        self.parent = parent # pointer to parent, if pointer is None then root node
+        self.state = state              # state being represented as this 
+        self.value = 0.0                # average value witnessed at this state
+        self.numVisits = 0              # times visited node
+        self.children = {}              # a dictionary of (action -> successor tree node) values
+        self.weight = float(weight)     # weight of selecting this node from parent originally
+        self.parent = parent            # pointer to parent, if pointer is None then root node
 
     
     def getActionToWeightMap(self):
@@ -173,6 +173,14 @@ class MCTreeSearchAgent(object):
         optimal action from the root node and it's successors.
 
         4 stages: Selection, Expansion, Simulation, Backpropogation
+
+        In the main loop we do the following:
+          selection
+          if expanded move is an end state, can't do anything, so skip it
+          expansion stage 1
+          expansion stage 2
+          simulation
+          backpropogation
         
         In this implementation expansion is split into two phases. Usually expansion consists 
         of selection until we find a state not cached in the tree, we add that one node. 
@@ -193,12 +201,12 @@ class MCTreeSearchAgent(object):
         rootNode.expand(self.selPolicy) 
         player = rootNode.state.player
         for i in range(self.iter):
-            leafNode = self.walkTree(rootNode) # selection
-            if (leafNode.endState()): continue # if our node we wish to expand is an end state, we can't do anything (and the value is deterministic and correct already) so skip it
-            self.expand(leafNode) # expansion1
-            newLeafNode = self.step(leafNode) # expansion2: select one of the new children
-            value = self.simulate(newLeafNode, player) # simulation
-            self.backPropogation(newLeafNode, value) # back propogation
+            leafNode = self.walkTree(rootNode) 
+            if (leafNode.endState()): continue            
+            self.expand(leafNode) 
+            newLeafNode = self.step(leafNode) 
+            value = self.simulate(newLeafNode, player) 
+            self.backPropogation(newLeafNode, value) 
 
         # Brute force if we can win next move, then take it
         for action in rootNode.children:
