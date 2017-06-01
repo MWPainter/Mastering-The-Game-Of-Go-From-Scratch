@@ -15,9 +15,10 @@ To commit to both the gym submodule and main repositry, simply commit as normal 
 
 ---
 
-Go code modified from Open AI gym: 
+Go code modified from Open AI's gym and Open AI's PachiPy: 
 ```
 https://github.com/openai/gym
+https://github.com/openai/pachi-py
 ```
 
 Forked gym repositry resides at: 
