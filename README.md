@@ -1,6 +1,5 @@
 # Mastering The Game Of Go *From Scratch*
 
----
 
 Downloading the repositry:
 1. git clone https://github.com/MWPainter/cs234-mastering-the-game-of-go-from-scratch.git
