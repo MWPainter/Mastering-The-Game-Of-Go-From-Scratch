@@ -15,8 +15,11 @@ To commit to both the gym submodule and main repositry, simply commit as normal 
 
 ---
 
-Go code modified from Open AI gym: https://github.com/openai/gym
-Forked gym repositry resides at: https://github.com/MWPainter/gym/tree/90783bbeb09a27066c239ecea9ffb69ceb81dfd1
+Go code modified from Open AI gym: 
+https://github.com/openai/gym
+
+Forked gym repositry resides at: 
+https://github.com/MWPainter/gym/tree/90783bbeb09a27066c239ecea9ffb69ceb81dfd1
 
 
 ---
