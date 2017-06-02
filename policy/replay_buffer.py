@@ -1,6 +1,4 @@
 import numpy as np
-import random
-from collections import deque 
 
 def prod(l):
     """
@@ -81,7 +79,19 @@ class ReplayBuffer(object):
         Return:
             sarses: np.ndarray of sars examples (flattened/encoded)
         """
-        # TODO: flatten each, then concatenate
+        batch_size = s.shape[0]
+        if batch_size != a.shape[0] or \
+           batch_size != r.shape[0] or \
+           batch_size != sp.shape[0]:
+            raise ReplayBufferError
+
+        s = np.reshape(s, (batch_size, -1))
+        a = np.reshape(a, (batch_size, -1))
+        r = np.reshape(r, (batch_size, -1))
+        sp = np.reshape(sp, (batch_size, -1))
+
+        sarses = np.stack((s,a,r,sp), axis=-1)
+        return sarses
 
 
     def _decode_sars(self, sarses):
@@ -92,7 +102,23 @@ class ReplayBuffer(object):
         Returns:
             tuple: (s,a,r,sp), each an np.ndarray of s/a/r/sp parts of a SARS example
         """
-        # TODO: chop up, and reshape
+        s_div = self._s_size
+        a_div = self._a_size + s_div
+        r_div = self._r_size + a_div
+
+        s =  sarses[:,      :s_div]
+        a =  sarses[:, s_div:a_div]
+        r =  sarses[:, a_div:r_div]
+        sp = sarses[:, r_div:     ]
+
+        s = np.reshape(s, (-1, self._s_shape))
+        a = np.reshape(a, (-1, self._a_shape))
+        r = np.reshape(r, (-1, self._r_shape))
+        sp = np.reshape(sp, (-1, self._s_shape))
+        
+        return (s,a,r,sp)
+
+
         
 
     def store_example(self, s, a, r, sp):
@@ -105,7 +131,11 @@ class ReplayBuffer(object):
             r: reward of the sample
             sp: next state of the sars sample
         """
-        # TODO: Extend first dim of s, a, r, sp and call batch one
+        s = np.expand_dims(s, axis=0)
+        a = np.expand_dims(a, axis=0)
+        r = np.expand_dims(r, axis=0)
+        sp = np.expand_dims(sp, axis=0)
+        self.store_example_batch(s,a,r,sp)
         
 
     def store_example_batch(self, s_arr, a_arr, r_arr, sp_arr):
@@ -125,6 +155,7 @@ class ReplayBuffer(object):
         self._push(sarses)
 
     def sample(self, n):
+
         """
         Sample n examples from the replay buffer
         Throws an exception if the replay buffer isn't properly initialized (i.e. the internal queue isn't full)
