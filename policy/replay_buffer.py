@@ -34,8 +34,8 @@ class ReplayBuffer(object):
         self._a_size = prod(a_shape)
         self._r_shape = r_shape
         self._r_size = prod(r_shape)
-        self._sars_size = self._s_size * 2 + self._a_size * self._r_size
-        self._queue = np.zeros((self.size, self.sars_size))
+        self._sars_size = self._s_size * 2 + self._a_size + self._r_size
+        self._queue = np.zeros((self._size, self._sars_size))
 
 
     @property
@@ -67,7 +67,7 @@ class ReplayBuffer(object):
         self._queue[-sarses_len:] = sarses
         
 
-    def _encode_sars(self, s, a, r, sp):
+    def _encode_sarses(self, s, a, r, sp):
         """
         Encodes numpy ndarrays, s, a, r, sp, into a single sarses array of the same length
         Assumes s, a, r, sp are arrays of the same length
@@ -90,11 +90,11 @@ class ReplayBuffer(object):
         r = np.reshape(r, (batch_size, -1))
         sp = np.reshape(sp, (batch_size, -1))
 
-        sarses = np.stack((s,a,r,sp), axis=-1)
+        sarses = np.concatenate((s,a,r,sp), axis=-1)
         return sarses
 
 
-    def _decode_sars(self, sarses):
+    def _decode_sarses(self, sarses):
         """
         Inverse of the _encode_sars function
         Args:
@@ -111,10 +111,10 @@ class ReplayBuffer(object):
         r =  sarses[:, a_div:r_div]
         sp = sarses[:, r_div:     ]
 
-        s = np.reshape(s, (-1, self._s_shape))
-        a = np.reshape(a, (-1, self._a_shape))
-        r = np.reshape(r, (-1, self._r_shape))
-        sp = np.reshape(sp, (-1, self._s_shape))
+        s = np.reshape(s, (-1,) + self._s_shape)
+        a = np.reshape(a, (-1,) + self._a_shape)
+        r = np.reshape(r, (-1,) + self._r_shape)
+        sp = np.reshape(sp, (-1,) + self._s_shape)
         
         return (s,a,r,sp)
 
@@ -147,9 +147,13 @@ class ReplayBuffer(object):
             r_arr: np.ndarray of reward of the samples
             sp_arr: np.ndarray of next state of the sars samples
         """
-        sarses = self._encode_sars(s_arr, a_arr, r_arr, sp_arr)
+        s_arr = np.array(s_arr)
+        a_arr = np.array(a_arr)
+        r_arr = np.array(r_arr)
+        sp_arr = np.array(sp_arr)
+        sarses = self._encode_sarses(s_arr, a_arr, r_arr, sp_arr)
         sarses_len = sarses.shape[0]
-        if not self.is_full: 
+        if not self._is_full: 
             self._contains += sarses_len
         self._pop(sarses_len)
         self._push(sarses)
@@ -164,10 +168,52 @@ class ReplayBuffer(object):
         Returns:
             tuple: (s's, a's, r's, sp's), each being a numpy ndarray of length n in the first dimension
         """
-        if not self.is_full or n >= self.size:
+        if not self._is_full or n > self._size:
             raise ReplayBufferError
-        indices = np.random.choice(self.size, n, replace=False)
+        indices = np.random.choice(self._size, n, replace=False)
         sarses_samples = self._queue[indices]
         return self._decode_sarses(sarses_samples)
+
+
+
+
+"""
+Include a main function for some testing
+"""
+if __name__ == "__main__":
+    rb = ReplayBuffer(3, (2,2), (1,), (1,))
+    ss = []
+    aa = []
+    rr = []
+    spsp = []
+    for i in xrange(3):
+        s = np.array([[i,i],[i,i]])
+        a = np.array([i])
+        r = np.array([i])
+        sp = np.array([[i+1,i],[i,i+1]])
+        ss.append(s)
+        aa.append(a)
+        rr.append(r)
+        spsp.append(sp)
+    rb.store_example_batch(ss, aa, rr, spsp)
+    print "Sample 1 (5 times):"
+    for _ in xrange(5): print rb.sample(1)
+    print "\n"
+    print "Sample 3:"
+    print rb.sample(3)
+    print "\n"
+    rb.store_example(np.array([[3,3,],[3,3]]),
+                     np.array([3]),
+                     np.array([3]),
+                     np.array([[3,3],[3,4]]))
+    rb.store_example(np.array([[3,3,],[3,3]]),
+                     np.array([3]),
+                     np.array([3]),
+                     np.array([[3,3],[3,3]]))
+    print "Sample 3 (with 2 changed):"
+    print rb.sample(3)
+    print "\n"  
+    print "Intrnal queue (check is of length 3):"
+    print rb._queue
 
 
