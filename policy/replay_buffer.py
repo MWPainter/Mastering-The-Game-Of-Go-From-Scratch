@@ -179,6 +179,7 @@ class ReplayBuffer(object):
 
 """
 Include a main function for some testing
+Manually check that the values make sense
 """
 if __name__ == "__main__":
     rb = ReplayBuffer(3, (2,2), (1,), (1,))
