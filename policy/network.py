@@ -281,7 +281,7 @@ class N(object):
             self.update_target_params()
             
         # occasionaly save the weights
-        if (t % self.config.saving_freq == 0):
+        if (t % self.config.checkpoint_freq == 0):
             self.checkpoint(t)
 
         return loss_eval, grad_eval
