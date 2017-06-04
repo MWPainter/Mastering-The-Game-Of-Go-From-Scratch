@@ -35,7 +35,7 @@ class N(object):
         self.pachi_env = gym.make(pachi_env_name)
 
         # Store the board (state) shape, action shape and reward shape
-        self.board_shape = board_shape
+        self.board_shape = self.env.state.board.encode().shape
         self.action_shape = (1,)
         self.reward_shape = (1,)
             
@@ -109,8 +109,8 @@ class N(object):
 
         Args:
             rewards: deque
-            max_q_values: deque
-            q_values: deque
+            max_p_values: deque
+            p_values: deque
             scores_eval: list
         """
         self.avg_reward = np.mean(rewards)
@@ -125,6 +125,33 @@ class N(object):
             self.eval_reward = scores_eval[-1]
 
 
+    def _board_from_env(self, state, player):
+        """
+        Helper to get the board (as a np.ndarray with shape (3,s,s) if s is the size of the board)
+        the encapsulates the game state. Used in train below
+
+        This is more complicated than it seems at first. Because board[0] is the player 1's peices and 
+        board[1] is player 2's peices. We need to use information from both player 1 and player 2, but 
+        pass it into the same format (board[0] being the agents peices and board[1] being the opponent 
+        peices). Thus, when it's player 2's turn, we swap the peices.
+
+        Furthermore, we cannot just use state.color, because otherwise in a (s,a,r,sp) example, we would 
+        flip the peices on one of s and sp, and not the other
+
+        Args:
+            state: A go state from the go environment
+            player: The player who's turn it is (self.env.state.color, *before* the action was performed)
+        Returns:
+            board: A np.ndarray with shape (3,s,s), where board[0] is the agents peices
+        """
+        board = state.board.encode()
+        if player != self.env.player_color:
+            tmp = board[0]
+            board[0] = board[1]
+            board[1] = tmp
+        return board
+
+
     def train(self, exp_schedule, lr_schedule):
         """
         Performs training of Q
@@ -136,10 +163,10 @@ class N(object):
         """
 
         # initialize replay buffer and variables
-        replay_buffer = GoReplayBuffer(self.config.buffer_size, self.board_shape, self.action_shape, self.reward_shape)
+        replay_buffer = ReplayBuffer(self.config.buffer_size, self.board_shape, self.action_shape, self.reward_shape)
         rewards = deque(maxlen=self.config.num_episodes_test)
-        max_q_values = deque(maxlen=1000)
-        q_values = deque(maxlen=1000)
+        max_p_values = deque(maxlen=1000)
+        p_values = deque(maxlen=1000)
         self.init_averages()
 
         t = last_eval = last_record = 0 # time control of nb of steps
@@ -163,24 +190,27 @@ class N(object):
 
                 if self.config.render_train: self.env.render()
 
+                # Who's turn is it?
+                player = self.env.state.color
+
                 # chose action according to current state and exploration
                 best_action, action_dist = self.get_best_action(state)
                 action                   = exp_schedule.get_action(best_action)
 
                 # store q values
-                max_q_values.append(max(q_values))
-                q_values += list(q_values)
+                max_p_values.append(max(action_dist))
+                p_values += list(action_dist)
 
                 # perform action in env
                 new_state, reward, done, info = self.env.step(action)
 
                 # Store the s, a, new_s, for later use in replay buffer
                 # Guessing the rewards, to be corrected when the game finishes
-                states.append(state)
+                states.append(self._board_from_state(state, player))
                 actions.append(action)
                 if t % 2 == 0: rewards_guess.append(1.0)
                 else: rewards_guess.append(-1.0)
-                next_states.append(new_state)
+                next_states.append(self._board_from_state(new_state, player))
 
                 # store the transition
                 state = new_state
@@ -191,7 +221,7 @@ class N(object):
                 # logging stuff
                 if ((t > self.config.learning_start) and (t % self.config.log_freq == 0) and
                    (t % self.config.learning_freq == 0)):
-                    self.update_averages(rewards, max_q_values, q_values, scores_eval)
+                    self.update_averages(rewards, max_p_values, p_values, scores_eval)
                     exp_schedule.update(t)
                     lr_schedule.update(t)
                     if len(rewards) > 0:

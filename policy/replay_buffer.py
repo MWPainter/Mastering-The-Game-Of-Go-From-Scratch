@@ -176,7 +176,6 @@ class ReplayBuffer(object):
 
 
 
-
 """
 Include a main function for some testing
 Manually check that the values make sense
