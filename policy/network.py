@@ -15,14 +15,12 @@ class N(object):
     """
     Abstract Class for implementing a network (for playing go)
     """
-    def __init__(self, env_name, pachi_env_name, board_shape, config, logger=None):
+    def __init__(self, board_size, config, logger=None):
         """
         Initialize network
 
         Args:
-            env_name: name of the go self play environment
-            pachi_env_name: name of the go pachi play environment
-            board_shape: shape of the board, needed for replay buffers
+            board_size: size of the board that this is going to be a network for
             config: class with hyperparameters
             logger: logger instance from logging module
         """
@@ -31,8 +29,9 @@ class N(object):
             os.makedirs(config.output_path)
 
         # Create the environments to use
-        self.env = gym.make(env_name)
-        self.pachi_env = gym.make(pachi_env_name)
+        self.board_size = board_size
+        self.env = gym.make(self._self_play_env_name)
+        self.pachi_env = gym.make(self._pachi_env_name)
 
         # Store the board (state) shape, action shape and reward shape
         self.board_shape = self.env.state.board.encode().shape
@@ -47,6 +46,28 @@ class N(object):
 
         # build model
         self.build()
+
+
+    @property
+    def _pachi_env_name(self):
+        """
+        Helper to grab the go env name
+        """
+        return 'Go' + str(self.board_size) \
+                    + 'x' \
+                    + str(self.board_size) \
+                    + '-v0'
+
+
+    @property
+    def _self_play_env_name(self):
+        """
+        Helper to grab the self play env name
+        """
+        return 'SelfPlayGo' + str(self.board_size) \
+                            + 'x' \
+                            + str(self.board_size) \
+                            + '-v0'
 
 
     def build(self):
