@@ -159,7 +159,9 @@ class N(object):
         Args:
             exp_schedule: Exploration instance s.t.
                 exp_schedule.get_action(best_action) returns an action
+                Instance of LinearExploration
             lr_schedule: Schedule for learning rate
+                Instance of LinearExploration
         """
 
         # initialize replay buffer and variables
@@ -218,12 +220,14 @@ class N(object):
                 # perform a training step
                 loss_eval, grad_eval = self.train_step(t, replay_buffer, lr_schedule.epsilon)
 
+                # Update schedules
+                exp_schedule.update(t)
+                lr_schedule.update(t)
+
                 # logging stuff
                 if ((t > self.config.learning_start) and (t % self.config.log_freq == 0) and
                    (t % self.config.learning_freq == 0)):
                     self.update_averages(rewards, max_p_values, p_values, scores_eval)
-                    exp_schedule.update(t)
-                    lr_schedule.update(t)
                     if len(rewards) > 0:
                         prog.update(t + 1, exact=[("Loss", loss_eval), ("Avg R", self.avg_reward), 
                                         ("Max R", np.max(rewards)), ("eps", exp_schedule.epsilon), 
