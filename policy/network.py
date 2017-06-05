@@ -146,7 +146,7 @@ class N(object):
             self.eval_reward = scores_eval[-1]
 
 
-    def _board_from_env(self, state, player):
+    def _board_from_state(self, state, player):
         """
         Helper to get the board (as a np.ndarray with shape (3,s,s) if s is the size of the board)
         the encapsulates the game state. Used in train below
@@ -328,7 +328,6 @@ class N(object):
             env = self.pachi_env
 
         # replay memory to play
-        replay_buffer = ReplayBuffer(self.config.buffer_size, self.config.state_history)
         rewards = []
 
         for i in range(num_episodes):
