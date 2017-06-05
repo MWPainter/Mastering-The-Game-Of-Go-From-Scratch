@@ -36,7 +36,7 @@ class config():
     target_update_freq = 500
     gamma              = 0.99
     learning_freq      = 4
-    state_history      = 4
+    state_history      = 1 # Changed this - was 4, now is 1. Don't think state history should matter for GO, except maybe for ko?
     lr_begin           = 0.005
     lr_end             = 0.001
     lr_nsteps          = nsteps_train/2

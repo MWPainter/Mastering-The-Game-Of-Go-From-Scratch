@@ -65,10 +65,11 @@ class Linear(DQN):
         ##############################################################
         ################YOUR CODE HERE (6-15 lines) ##################
         # NOTE: was originally tf.uint8, I made a float so could be set with output of other model
-        self.s = tf.placeholder(name="state_input", dtype=tf.float32, shape=(None, state_shape[0], state_shape[1], state_shape[2]*self.config.state_history)) 
+        # GO shape is 3 x board_widht x board_width. SO need to move so channels are at back.
+        self.s = tf.placeholder(name="state_input", dtype=tf.float32, shape=(None, state_shape[0], state_shape[1], state_shape[2])) 
         self.a = tf.placeholder(dtype=tf.int32, shape=(None,)) 
         self.r = tf.placeholder(dtype=tf.float32, shape=(None,)) 
-        self.sp = tf.placeholder(dtype=tf.uint8, shape=(None, state_shape[0], state_shape[1], state_shape[2]*self.config.state_history)) 
+        self.sp = tf.placeholder(dtype=tf.uint8, shape=(None, state_shape[0], state_shape[1], state_shape[2])) 
         self.done_mask = tf.placeholder(dtype=tf.bool, shape=(None,)) 
         self.lr = tf.placeholder(dtype=tf.float32) 
 
@@ -112,58 +113,147 @@ class Linear(DQN):
         ##############################################################
         ################ YOUR CODE HERE - 2-3 lines ################## 
         state_shape = list(self.env.observation_space.shape)
-        flat_input_size = state_shape[0]*state_shape[1]*state_shape[2]*self.config.state_history
-        #flat_input_size = state*board_width*state_shape[2]*self.config.state_history
+        input_channels = state_shape[0] 
+        flat_input_size = state_shape[0]*state_shape[1]*state_shape[2]
 
-        num_small_forwards = 1 # TODO test changing this thing
-        small_model_input_shape = [-1, prev_board_width, prev_board_width, state_shape[2]*self.config.state_history]
-        # TODO IDK why this is the input shape for the 5x5 model, investigate this
-        small_model_input_shape = [-1, 3, 5, 20]
+        state = tf.transpose(self.s, [0,2,3,1]) # go inputs have channels first, need to transpose
 
+
+        num_small_forwards = 1 # TODO IMPLEMENT AND TEST THIS
+        small_model_input_shape = [-1, prev_board_width, prev_board_width, input_channels]
         small_model_input_size = small_model_input_shape[1]*small_model_input_shape[2]*small_model_input_shape[3]
 
+        ###########################################################
+        # Policy Convolution Network (same architecture as paper) #
+        ###########################################################
+        # this happens regardless of whether we are transfer learning or not.
+        conv_layers_before_transfer = 3 
+        total_conv_layers = 5 # total conv layers is 12 in paper (not including final 1x1 layer)
+        k = 32 # this is 192 in the paper
 
-        # THIS WASN'T WORKING, so I just made original placeholder a float. 
-        # probably not the best way to do it
-        #float_state = tf.cast(self.s, tf.float32, name="float_state")
+        with tf.variable_scope(scope):
+          x = state
+          for i in range(conv_layers_before_transfer):
+            kernel_size = 5 if i == 1 else 3
+            with tf.variable_scope("layer_%d" % i):
+              x = tf.layers.conv2d(
+                            inputs=x, 
+                            filters=k, 
+                            kernel_size=kernel_size,
+                            strides=1,
+                            padding='same',
+                            activation=tf.nn.relu,
+                            bias_initializer=tf.zeros_initializer())
+          board_rep = x # this will be concatenated with board representations from
+                        # the transfer learning, and then passed through the remainder
+                        # of the convolutional layers
 
         if TRANSFER:
-          # FIRST MAP FROM LARGE TO SMALL BOARD
+          ######################################
+          # First, map large state to small in #
+          ######################################
 
-          # TODO is this still true?
-          # NOTE: took me forever to figure this out. Can't have "import_meta_graph" within a "tf.variable_scope" or else everything is screwed up. 
-          # so need to only use this scoping around the actual variable definitions.
-          with tf.variable_scope(scope):
-            W1 = tf.get_variable(name="W_to_small",dtype=tf.float32, shape=[flat_input_size, small_model_input_size], initializer=tf.contrib.layers.xavier_initializer())
-            b1 = tf.get_variable(name="b_to_small",dtype=tf.float32, shape=[small_model_input_size], initializer=tf.zeros_initializer())
-          small_input = tf.matmul(tf.contrib.layers.flatten(self.s), W1) + b1 
-
-          small_input = tf.reshape(small_input, small_model_input_shape)
+          # Method 1: convolution of small network
+          pbw = prev_board_width; bw = board_width
+          num_strides = bw - pbw + 1
+          total_slices = num_strides**2
+          # first, get slices of board state. 
+          slices_start_indices = [(i,j) for i in range(num_strides) for j in range(num_strides)]
+          slices = [tf.slice(state, [0,i,j,0], [-1, pbw, pbw, -1]) for (i,j) in slices_start_indices]
+          # concatenate them so we can pass to small network in one batch
+          small_input1 = tf.concat(slices, axis=0)
+          small_input = tf.transpose(small_input1, [0,3,1,2])
 
           # this loads the small graph, and sets its input to be model1_in
           with gfile.FastGFile(prev_dir + '/frozen.pb','rb') as f:
             graph_def = tf.GraphDef()
             graph_def.ParseFromString(f.read())
-          small_out = tf.import_graph_def(graph_def, input_map={"state_input:0" : small_input}, return_elements=['out:0'])
-          small_out = tf.reshape(small_out, [-1, (prev_board_width*prev_board_width+2) * num_small_forwards])
-          small_out_size = (prev_board_width*prev_board_width+2)*num_small_forwards
+          small_out = tf.import_graph_def(graph_def, input_map={"state_input:0" : small_input}, return_elements=['out:0'])[0]
+          # has shape [batch_size * num_slices, num_actions]
+          # small_out = tf.reshape(small_out, [-1, (prev_board_width*prev_board_width+2) * num_small_forwards])
+          # small_out_size = (prev_board_width*prev_board_width+2)*num_small_forwards
 
           #print(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES))
           #print([n.name for n in tf.get_default_graph().as_graph_def().node])
 
-          # NOW, MAP SMALL OUT TO LARGE OUT
-          with tf.variable_scope(scope):
-            W2 = tf.get_variable(name="W_to_out",dtype=tf.float32, shape=[small_out_size, num_actions], initializer=tf.contrib.layers.xavier_initializer())
-            b2 = tf.get_variable(name="b_to_out",dtype=tf.float32, shape=[num_actions], initializer=tf.zeros_initializer())
-          out = tf.matmul(small_out, W2) + b2 
+          ######################################
+          # now, map small out to to large out #
+          ######################################
 
-        else:
-          with tf.variable_scope(scope):
-            W1 = tf.get_variable(name="W1",dtype=tf.float32, shape=[flat_input_size, num_actions], initializer=tf.contrib.layers.xavier_initializer())
-            b1 = tf.get_variable(name="b1",dtype=tf.float32, shape=[self.env.action_space.n], initializer=tf.zeros_initializer())
-          out = tf.matmul(tf.contrib.layers.flatten(self.s), W1) + b1 
+          # Method 1: convolution of small network
+          # might be possible to vectorize all this with numpy indexing. TODO
+          # unstack slices first
+          slices = tf.split(small_out, total_slices, axis=0) # each slice has shape [batch_size, pbw**2]
+          # ignore pass action and resign action, and reshape into shape of small board
+          #slices = [s[:, :-2] for s in slices]
+          slices = [tf.reshape(s, [-1, pbw, pbw]) for s in slices] # [batch_size, pbw, pbw] 
+          # pad all the slices back to large board shape
+          # TODO convert paddings to tensor?
+          slices = [tf.pad(s, [[0,0],[i,bw-pbw-i],[j,bw-pbw-j]]) for (s,(i,j)) in zip(slices,slices_start_indices)]
+          transfer_out1 = tf.stack(slices, axis=3) # has size [-1, bw, bw, total_slices]
+          # concatenate this with normal board representation
+          board_rep = tf.concat([transfer_out1, board_rep], axis=3)
 
+
+          ###############################
+          # METHOD 2: CONV+SMALL+DECONV #
+          ###############################
+          # this is going to be hard to get working with general layer sizes
+          #conv_deconv_layers = 2
+          #k = 32 
+
+          #with tf.variable_scope(scope):
+          #  x = state
+          #  for i in range(conv_deconv_layers):
+          #    #kernel_size = 5 if i == 1 else 3
+          #    with tf.variable_scope("layer_%d" % i):
+          #      x = tf.layers.conv2d(
+          #                    inputs=x, 
+          #                    filters=k, 
+          #                    kernel_size=4,
+          #                    strides=1,
+          #                    padding='same',
+          #                    activation=tf.nn.relu,
+          #                    bias_initializer=tf.zeros_initializer())
+          #  board_rep = x # this will be concatenated with board representations from
+          #                # the transfer learning, and then passed through the remainder
+          #                # of the convolutional layers
+
+
+
+
+        # now, continue the policy network convolution on the board rep
+        with tf.variable_scope(scope):
+          x = board_rep
+          for i in range(conv_layers_before_transfer, total_conv_layers):
+            kernel_size = 5 if i == 1 else 3 # this line isn't really necessary here
+            with tf.variable_scope("layer_%d" % i):
+              x = tf.layers.conv2d(
+                            inputs=x, 
+                            filters=k, 
+                            kernel_size=kernel_size,
+                            strides=1,
+                            padding='same',
+                            activation=tf.nn.relu,
+                            bias_initializer=tf.zeros_initializer())
+          # last layer: kernel_size 1, one filter, and different bias for each position (action)
+          x = tf.layers.conv2d(
+                        inputs=x, 
+                        filters=1, 
+                        kernel_size=1,
+                        strides=1)
+          # x now has shape [batch_size, board_width, board_width, 1]
+          x = tf.reshape(x, [-1, board_width**2]) # now shape = [batch_size, board_width **2]
+          # now apply different bias to each position
+          last_bias = tf.get_variable(name="last_conv_b",dtype=tf.float32, shape=[board_width**2], initializer=tf.zeros_initializer())
+          out = x + last_bias
+
+        # need to name this operation so we can access it for transfer learning
+        # when loading the graph from the save
         out = tf.identity(out, name='out')
+
+        # NEVER SURRENDER
+        out = tf.pad(out,[[0,0],[0,2]])
 
         # export the meta graph now, so that it doesn't include optimizer variables
         if scope=='q':
@@ -217,11 +307,7 @@ class Linear(DQN):
         q_col = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=q_scope)
         target_col = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=target_q_scope)
         ops = []
-        print(q_col)
-        print(target_col)
         for (q,t) in zip(q_col,target_col):
-          print(q)
-          print(t)
           ops += [tf.assign(t, q)]
         self.update_target_op = tf.group(*ops)
 

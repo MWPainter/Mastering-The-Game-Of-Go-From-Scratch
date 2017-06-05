@@ -1,0 +1,4 @@
+Transfer learning: the original environment state has dtype=int8. But when 
+  transfer learning, we don't map to int8, we map to float32. So, I just 
+  decided to cast the environment state to float32. I'm sure there is
+  a better way to do this.
