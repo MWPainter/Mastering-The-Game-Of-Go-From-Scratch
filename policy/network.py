@@ -8,7 +8,7 @@ from gym import wrappers
 from collections import deque
 
 from util import get_logger, Progbar
-from replay_buffer import GoReplayBuffer
+from replay_buffer import ReplayBuffer
 
 
 class N(object):
@@ -65,13 +65,11 @@ class N(object):
 
         # compute Q values of state
         s = self.process_state(self.s)
-        self.features = self.get_features_op(s, scope=self.config.scope, reuse=False)
-        self.outputs = self.get_output_op(self.features, scope=self.config.scope, reuse=False)
+        self.outputs = self.get_output_op(s, scope=self.config.scope, reuse=False)
 
         # compute Q values of next state
         sp = self.process_state(self.sp)
-        self.target_features = self.get_features_op(sp, scope=self.config.target_scope, reuse=False)
-        self.target_outputs = self.get_output_op(self.features, scope=self.config.target_scope, reuse=False)
+        self.target_outputs = self.get_output_op(sp, scope=self.config.target_scope, reuse=False)
 
         # add update operator for target network
         self.add_update_target_op(self.config.scope, self.config.target_scope)
@@ -177,21 +175,6 @@ class N(object):
         raise NotImplementedError
 
 
-    def get_features_op(self, state, scope, reuse=False):
-        """
-        Get the tf op for the output of the last CONVOLUTIONAL layer of the network
-        This should be the learned features from this network
-        I.e. This is all of the layers, minus the (probably two) output (fully connected) layers
-
-        Args:
-            state: The state (input to network)
-            scope: scope to use with the network
-            reuse: reuse variables
-
-        """
-        raise NotImplementedError
-
-
     def get_output_op(self, features_op, scope, reuse=False):
         """
         Get the tf op for the output of the networ
@@ -201,7 +184,7 @@ class N(object):
         on another layer or two on the end
 
         Args:
-            features_op: tf op for the first part of the network
+            state: The state (input to network)
             scope: scope to use with the network
             reuse: reuse variables
         """
