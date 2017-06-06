@@ -123,13 +123,13 @@ class BasicNetwork(QN):
         grads_var_list = optimizer.compute_gradients(self.loss, variables)
         grads, variables = zip(*grads_var_list)
         if self.config.grad_clip:
-                grads_new = []
-                for g in grads:
-                        if not g is None:
-                                grads_new += [tf.clip_by_norm(g, self.config.clip_val)]
-                        else:
-                                grads_new += [g]
-                grads = grads_new
+            grads_new = []
+            for g in grads:
+                if not g is None:
+                    grads_new += [tf.clip_by_norm(g, self.config.clip_val)]
+                else:
+                    grads_new += [g]
+            grads = grads_new
         grads_var_list = zip(grads, variables)
         self.train_op = optimizer.apply_gradients(grads_var_list)
         self.grad_norm = tf.global_norm(grads)
@@ -139,9 +139,6 @@ class BasicNetwork(QN):
 Some testing :)
 """
 if __name__ == '__main__':
- 
-    env = gym.make('Go%dx%d-v0' % (board_width, board_width))
-
     # exploration strategy
     exp_schedule = LinearExploration(config.eps_begin, config.eps_end, config.eps_nsteps)
 
