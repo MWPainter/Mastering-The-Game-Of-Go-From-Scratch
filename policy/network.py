@@ -15,6 +15,13 @@ class N(object):
     """
     Abstract Class for implementing a network (for playing go)
     """
+
+
+
+    ###########################################
+    ### Construction                        ###
+    ###########################################
+
     def __init__(self, board_size, config, logger=None):
         """
         Initialize network
@@ -49,6 +56,64 @@ class N(object):
         self.build()
 
 
+    def build(self):
+        """
+        Build model by adding all necessary variables
+        """
+        # add placeholders
+        self.add_placeholders_op()
+
+        # compute Q values of state
+        s = self.process_state(self.s)
+        self.features = self.get_features_op(s, scope=self.config.scope, reuse=False)
+        self.outputs = self.get_output_op(self.features, scope=self.config.scope, reuse=False)
+
+        # compute Q values of next state
+        sp = self.process_state(self.sp)
+        self.target_features = self.get_features_op(sp, scope=self.config.target_scope, reuse=False)
+        self.target_outputs = self.get_output_op(self.features, scope=self.config.target_scope, reuse=False)
+
+        # add update operator for target network
+        self.add_update_target_op(self.config.scope, self.config.target_scope)
+
+        # add square loss
+        self.add_loss_op(self.outputs, self.target_outputs)
+
+        # add optmizer for the main networks
+        self.add_optimizer_op(self.config.scope)
+
+
+    def initialize(self):
+        """
+        Assumes the graph has been constructed (run time initialization) 
+        This is the first thing that run calls
+        Creates a tf Session and run initializer of variables
+        """
+        # create tf session
+        self.sess = tf.Session()
+
+        # tensorboard stuff
+        self.add_summary()
+
+        # initiliaze all variables
+        init = tf.global_variables_initializer()
+        self.sess.run(init)
+
+        # synchronise network and target network
+        self.sess.run(self.update_target_op)
+
+        # for saving networks weights
+        self.saver = tf.train.Saver()
+
+        # checkpoint straight away, coz why not
+        self.checkpoint(0)
+
+
+
+    ###########################################
+    ### Helpers                             ###
+    ###########################################
+
     @property
     def _pachi_env_name(self):
         """
@@ -71,6 +136,40 @@ class N(object):
                             + '-v0'
 
 
+    def _board_from_state(self, state, player):
+        """
+        Helper to get the board (as a np.ndarray with shape (3,s,s) if s is the size of the board)
+        the encapsulates the game state. Used in train below
+
+        This is more complicated than it seems at first. Because board[0] is the player 1's peices and 
+        board[1] is player 2's peices. We need to use information from both player 1 and player 2, but 
+        pass it into the same format (board[0] being the agents peices and board[1] being the opponent 
+        peices). Thus, when it's player 2's turn, we swap the peices.
+
+        Furthermore, we cannot just use state.color, because otherwise in a (s,a,r,sp) example, we would 
+        flip the peices on one of s and sp, and not the other
+
+        Args:
+            state: A go state from the go environment
+            player: The player who's turn it is (self.env.state.color, *before* the action was performed)
+        Returns:
+            board: A np.ndarray with shape (3,s,s), where board[0] is the agents peices
+        """
+        board = state.board.encode()
+        if player != self.env.player_color:
+            tmp = board[0]
+            board[0] = board[1]
+            board[1] = tmp
+        return board
+
+
+
+
+
+    ###########################################
+    ### Defining tensorflow ops             ###
+    ###########################################
+        
     def add_placeholders_op(self):
         """
         Add tf placeholders to the class
@@ -157,32 +256,12 @@ class N(object):
         return state
 
 
-    def build(self):
-        """
-        Build model by adding all necessary variables
-        """
-        # add placeholders
-        self.add_placeholders_op()
 
-        # compute Q values of state
-        s = self.process_state(self.s)
-        self.features = self.get_features_op(s, scope=self.config.scope, reuse=False)
-        self.outputs = self.get_output_op(self.features, scope=self.config.scope, reuse=False)
 
-        # compute Q values of next state
-        sp = self.process_state(self.sp)
-        self.target_features = self.get_features_op(sp, scope=self.config.target_scope, reuse=False)
-        self.target_outputs = self.get_output_op(self.features, scope=self.config.target_scope, reuse=False)
 
-        # add update operator for target network
-        self.add_update_target_op(self.config.scope, self.config.target_scope)
-
-        # add square loss
-        self.add_loss_op(self.outputs, self.target_outputs)
-
-        # add optmizer for the main networks
-        self.add_optimizer_op(self.config.scope)
-
+    ###########################################
+    ### Saving models                       ###
+    ###########################################
  
     def checkpoint(self, timestep):
         """
@@ -190,58 +269,26 @@ class N(object):
         Args:
             timestep: the time for which we are checkpointing
         """
-        raise NotImplementedError
+        if not os.path.exists(self.config.model_checkpoint_output):
+            os.makedirs(self.config.model_checkpoint_output)
+        self.saver.save(self.sess, self.config.model_checkpoint_output + '.' + str(timestep))
 
 
     def save(self):
         """
         Save the final model parameters
         """
-        raise NotImplementedError
+        if not os.path.exists(self.config.model_output):
+            os.makedirs(self.config.model_output)
+        self.saver.save(self.sess, self.config.model_output)
 
 
-    def initialize(self):
-        """
-        Initialize variables if necessary
-        """
-        raise NotImplementedError
 
 
-    def update_target_params(self):
-        """
-        Update params of target network
-        """
-        raise NotImplementedError
 
-
-    @property
-    def policy(self, state):
-        """
-        Returns a probability distribution function, taking states and returning probabilities over actions
-        """
-        return lambda state: self.get_action_distribution(state)
-
-
-    def get_action_distribution(self, state):
-        """
-        Returns a distribution over actions 
-    
-        Args:
-            state: tf variables for the current state of the game
-        Returns:
-            Probability distribution over actions         
-        """
-        raise NotImplementedError
-
-
-    def get_best_action(self, state):
-        """
-        Gets the best action for this state, and the distribution that was decided from
-        Returns:
-            tuple: best_action, action_distribution
-        """
-        raise NotImplementedError
-
+    ###########################################
+    ### tensor board                        ###
+    ###########################################
 
     def init_averages(self):
         """
@@ -280,32 +327,93 @@ class N(object):
             self.eval_reward = scores_eval[-1]
 
 
-    def _board_from_state(self, state, player):
+    def add_summary(self):
         """
-        Helper to get the board (as a np.ndarray with shape (3,s,s) if s is the size of the board)
-        the encapsulates the game state. Used in train below
+        Tensorboard stuff
+        """
+        # extra placeholders to log stuff from python
+        self.avg_reward_placeholder = tf.placeholder(tf.float32, shape=(), name="avg_reward")
+        self.max_reward_placeholder = tf.placeholder(tf.float32, shape=(), name="max_reward")
+        self.std_reward_placeholder = tf.placeholder(tf.float32, shape=(), name="std_reward")
 
-        This is more complicated than it seems at first. Because board[0] is the player 1's peices and 
-        board[1] is player 2's peices. We need to use information from both player 1 and player 2, but 
-        pass it into the same format (board[0] being the agents peices and board[1] being the opponent 
-        peices). Thus, when it's player 2's turn, we swap the peices.
+        self.avg_p_placeholder  = tf.placeholder(tf.float32, shape=(), name="avg_p")
+        self.max_p_placeholder  = tf.placeholder(tf.float32, shape=(), name="max_p")
+        self.std_p_placeholder  = tf.placeholder(tf.float32, shape=(), name="std_p")
 
-        Furthermore, we cannot just use state.color, because otherwise in a (s,a,r,sp) example, we would 
-        flip the peices on one of s and sp, and not the other
+        self.eval_reward_placeholder = tf.placeholder(tf.float32, shape=(), name="eval_reward")
+
+        # add placeholders from the graph
+        tf.summary.scalar("loss", self.loss)
+        tf.summary.scalar("grads norm", self.grad_norm)
+
+        # extra summaries from python -> placeholders
+        tf.summary.scalar("Avg Reward", self.avg_reward_placeholder)
+        tf.summary.scalar("Max Reward", self.max_reward_placeholder)
+        tf.summary.scalar("Std Reward", self.std_reward_placeholder)
+
+        tf.summary.scalar("Avg p", self.avg_p_placeholder)
+        tf.summary.scalar("Max p", self.max_p_placeholder)
+        tf.summary.scalar("Std p", self.std_p_placeholder)
+
+        tf.summary.scalar("Eval Reward", self.eval_reward_placeholder)
+            
+        # logging
+        self.merged = tf.summary.merge_all()
+        self.file_writer = tf.summary.FileWriter(self.config.output_path, 
+                                                self.sess.graph)
+
+
+
+
+
+    ###########################################
+    ### Network interaction                 ###
+    ###########################################
+
+    @property
+    def policy(self, state):
+        """
+        Returns a probability distribution function, taking states and returning probabilities over actions
+        """
+        return lambda state: self.get_action_distribution(state)
+
+
+    def get_action_distribution(self, state):
+        """
+        Returns a distribution over actions 
+    
+        Args:
+            state: tf variables for the current state of the game
+        Returns:
+            Probability distribution over actions         
+        """
+        raise NotImplementedError
+
+
+    def get_best_action(self, state):
+        """
+        Return best action (its the same regardless of if the function learned is p or Q)
 
         Args:
-            state: A go state from the go environment
-            player: The player who's turn it is (self.env.state.color, *before* the action was performed)
+            state: state to put into network
         Returns:
-            board: A np.ndarray with shape (3,s,s), where board[0] is the agents peices
+            action: (int) the best action
+            action_values: (np array) q/p values for all actions
         """
-        board = state.board.encode()
-        if player != self.env.player_color:
-            tmp = board[0]
-            board[0] = board[1]
-            board[1] = tmp
-        return board
+        action_values = self.sess.run(self.q, feed_dict={self.s: [state]})[0]
+        return np.argmax(action_values), action_values
+    
 
+    def update_target_params(self):
+        """
+        Update params of target network (just runs the op)
+        """
+        self.sess.run(self.update_target_op)
+
+
+    ###########################################
+    ### Training loop + eval                ###
+    ###########################################
 
     def train(self, exp_schedule, lr_schedule):
         """
@@ -451,6 +559,58 @@ class N(object):
         return loss_eval, grad_eval
 
 
+    def update_step(self, t, replay_buffer, lr):
+        """
+        Performs an update of parameters by sampling from replay_buffer
+
+        Args:
+            t: number of iteration (episode and move)
+            replay_buffer: ReplayBuffer instance .sample() gives batches
+            lr: (float) learning rate
+        Returns:
+            loss: (Q - Q_target)^2
+        """
+
+        s_batch, a_batch, r_batch, sp_batch, done_mask_batch, _ = replay_buffer.sample(
+            self.config.batch_size)
+
+
+        fd = {
+            # inputs
+            self.s: s_batch,
+            self.a: a_batch,
+            self.r: r_batch,
+            self.sp: sp_batch, 
+            self.done_mask: done_mask_batch,
+            self.lr: lr, 
+            # extra info
+            self.avg_reward_placeholder: self.avg_reward, 
+            self.max_reward_placeholder: self.max_reward, 
+            self.std_reward_placeholder: self.std_reward, 
+            self.avg_p_placeholder: self.avg_p, 
+            self.max_p_placeholder: self.max_p, 
+            self.std_p_placeholder: self.std_p, 
+            self.eval_reward_placeholder: self.eval_reward, 
+        }
+
+        loss_eval, grad_norm_eval, summary, _ = self.sess.run([self.loss, self.grad_norm, 
+                                                 self.merged, self.train_op], feed_dict=fd)
+
+
+        # tensorboard stuff
+        self.file_writer.add_summary(summary, t)
+        
+        return loss_eval, grad_norm_eval
+
+
+    def save_opponent(self, some_scope_thing):
+        """
+        Save the current params to be able to be used as an opponent later
+        """
+        # TODO
+        raise NotImplementedError
+
+
     def evaluate(self, env=None, num_episodes=None):
         """
         Evaluation with same procedure as the training
@@ -498,6 +658,12 @@ class N(object):
         return avg_reward
 
 
+
+
+    ###########################################
+    ### Run/coord training                  ###
+    ###########################################
+
     def run(self, exp_schedule, lr_schedule):
         """
         Apply procedures of training for a QN
@@ -523,46 +689,7 @@ class N(object):
 
 
 
-class QN(N):
-    """
-    'Abstract' class encapsulating a network that will learn a policy function
-    These networks are learned using reinforcement lerarning
-    """
-
-
-class PN(N):
-    """
-    'Abstract' class encapsulating a network that will learn a policy function
-    These networks are learned using reinforcement learning
-
-    N.B. This needs to overload the 'get_best_action" to somehow specify an old opponent
-    """
-    def get_best_action(self, some_scope_thing):
-        """
-        Gets the best action for the network we're currently training, OR a network 
-        specified by "some_scope_thing"
-        """
-        pass
-
     
-    def save_opponent(self, some_scope_thing):
-        """
-        Save the current params to be able to be used as an opponent later
-        """
-        pass
-
-
-    def train(self, exp_schedule, lr_schedule):
-        """
-        Performs training of p (this necessarily needs to be different to training for a p
-        network).
-
-        Args:
-            exp_schedule: Exploration instance s.t.
-                exp_schedule.get_action(best_action) returns an action
-            lr_schedule: Schedule for learning rate
-        """
-        raise NotImplementedError
 
 
 
