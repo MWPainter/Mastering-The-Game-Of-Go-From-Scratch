@@ -36,15 +36,18 @@ class N(object):
         if not os.path.exists(config.output_path):
             os.makedirs(config.output_path)
 
-        # Create the environments to use
+        # Create the environments to use (and reset to populate them with info)
         self.board_size = board_size
         self.env = gym.make(self._self_play_env_name)
+        self.env.reset()
         self.pachi_env = gym.make(self._pachi_env_name)
+        self.pachi_env.reset()
 
         # Store the board (state) shape, action shape and reward shape
         self.board_shape = self.env.state.board.encode().shape
         self.action_shape = (1,)
         self.reward_shape = (1,)
+        self.num_actions = self.env.actions_space.n
             
         # store hyper params
         self.config = config
@@ -445,7 +448,7 @@ class N(object):
 
                 # chose action according to current state and exploration
                 best_action, action_dist = self.get_best_action(state)
-                action                   = exp_schedule.get_action(best_action)
+                action                   = exp_schedule.get_action(best_action, self.env)
 
                 # store q values
                 max_p_values.append(max(action_dist))
