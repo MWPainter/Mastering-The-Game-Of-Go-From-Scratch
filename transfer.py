@@ -173,8 +173,8 @@ class Linear(DQN):
           # small_out = tf.reshape(small_out, [-1, (prev_board_width*prev_board_width+2) * num_small_forwards])
           # small_out_size = (prev_board_width*prev_board_width+2)*num_small_forwards
 
-          #print(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES))
-          #print([n.name for n in tf.get_default_graph().as_graph_def().node])
+          print(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES))
+          print([n.name for n in tf.get_default_graph().as_graph_def().node])
 
           ######################################
           # now, map small out to to large out #
@@ -199,28 +199,65 @@ class Linear(DQN):
           # METHOD 2: CONV+SMALL+DECONV #
           ###############################
           # this is going to be hard to get working with general layer sizes
-          #conv_deconv_layers = 2
-          #k = 32 
+          # FOR NOW, ASSUME THAT board_width = prev_board_width + 2*n for some integer n
+          conv_deconv_start_layers = 2 # number of convolution layers with SAME padding before VALID reduction
+          k = 16
 
-          #with tf.variable_scope(scope):
-          #  x = state
-          #  for i in range(conv_deconv_layers):
-          #    #kernel_size = 5 if i == 1 else 3
-          #    with tf.variable_scope("layer_%d" % i):
-          #      x = tf.layers.conv2d(
-          #                    inputs=x, 
-          #                    filters=k, 
-          #                    kernel_size=4,
-          #                    strides=1,
-          #                    padding='same',
-          #                    activation=tf.nn.relu,
-          #                    bias_initializer=tf.zeros_initializer())
-          #  board_rep = x # this will be concatenated with board representations from
-          #                # the transfer learning, and then passed through the remainder
-          #                # of the convolutional layers
+          with tf.variable_scope(scope):
+            x = state
+            for i in range(conv_deconv_start_layers):
+              #kernel_size = 5 if i == 1 else 3
+              with tf.variable_scope("cd_conv_layer_%d" % i):
+                x = tf.layers.conv2d(
+                              inputs=x, 
+                              filters=k, 
+                              kernel_size=3,
+                              strides=1,
+                              padding='same',
+                              activation=tf.nn.relu,
+                              bias_initializer=tf.zeros_initializer())
+            # every convolution with kernel_size=3, stride=1, and padding='valid' will reduce board_width by 2
+            # so we need to reduce until size is equal to prev_board_width
+            for i in range(board_width, prev_board_width, -2):
+              with tf.variable_scope("cd_red_layer_%d" % i): # "red" for "reduction"
+                if i == prev_board_width + 2: # the last layer
+                  k = 3 # the number of channels for board state
+                x = tf.layers.conv2d(
+                              inputs=x, 
+                              filters=k, 
+                              kernel_size=3,
+                              strides=1,
+                              padding='valid',
+                              activation=tf.nn.relu,
+                              bias_initializer=tf.zeros_initializer())
+            # x has size [-1, prev_board_width, prev_board_width, 3]
+            print("X SHAPE")
+            print(x.get_shape())
 
+          small_input = tf.transpose(x, [0,3,1,2])
+          small_features = tf.import_graph_def(graph_def, input_map={"state_input:0" : small_input}, return_elements=['final_features:0'])[0]
+          with tf.variable_scope(scope):
+            # every convolution with kernel_size=3, stride=1, and padding='valid' will reduce board_width by 2
+            # so we need to reduce until size is equal to prev_board_width
+            x = small_features
+            for i in range(prev_board_width, board_width, 2):
+              with tf.variable_scope("cd_deconv_layer_%d" % i): # "red" for "reduction"
+                # should we do this?
+                #if i == board_width - 2: # the last layer
+                #  k = 3 # the number of channels for board state
+                x = tf.layers.conv2d_transpose(
+                              inputs=x, 
+                              filters=k, 
+                              kernel_size=3,
+                              strides=1,
+                              padding='valid',
+                              activation=tf.nn.relu,
+                              bias_initializer=tf.zeros_initializer())
+            
 
-
+              
+              
+            board_rep = tf.concat([x, board_rep], axis=3)
 
         # now, continue the policy network convolution on the board rep
         with tf.variable_scope(scope):
@@ -236,6 +273,9 @@ class Linear(DQN):
                             padding='same',
                             activation=tf.nn.relu,
                             bias_initializer=tf.zeros_initializer())
+               
+        x = tf.identity(x, name='final_features') # for transfer learning
+        with tf.variable_scope(scope):
           # last layer: kernel_size 1, one filter, and different bias for each position (action)
           x = tf.layers.conv2d(
                         inputs=x, 
