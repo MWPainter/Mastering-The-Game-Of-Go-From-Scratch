@@ -22,6 +22,7 @@ class N(object):
         Args:
             board_size: size of the board that this is going to be a network for
             config: class with hyperparameters
+            scope: the scope under which the variables will be 
             logger: logger instance from logging module
         """
         # directory for training outputs
@@ -70,11 +71,117 @@ class N(object):
                             + '-v0'
 
 
-    def build(self):
+    def add_placeholders_op(self):
         """
-        Build model
+        Add tf placeholders to the class
         """
         raise NotImplementedError
+
+
+    def get_features_op(self, state, scope, reuse=False):
+        """
+        Get the tf op for the output of the last CONVOLUTIONAL layer of the network
+        This should be the learned features from this network
+        I.e. This is all of the layers, minus the (probably two) output (fully connected) layers
+
+        Args:
+            state: The state (input to network)
+            scope: scope to use with the network
+            reuse: reuse variables
+
+        """
+        raise NotImplementedError
+
+
+    def get_output_op(self, features_op, scope, reuse=False):
+        """
+        Get the tf op for the output of the networ
+        If this is a Q-network, then it should be the Q-values
+        If it's a p-network, then it should be the prob distr over actions
+        THis function needs to take the features_op (the main part of the network) and then bolting 
+        on another layer or two on the end
+
+        Args:
+            features_op: tf op for the first part of the network
+            scope: scope to use with the network
+            reuse: reuse variables
+        """
+        raise NotImplementedError
+
+
+    def add_update_target_op(self, scope, target_scope):
+        """
+        Returns the update target op
+        When run it should copy the variables from inside scope 'scope' to scope 'target_scope'
+        It's called periodically to update the target network
+    
+        Args:
+            scope: name of the scope of variables in the network being trained
+            target_scope: name of the scope of variables in the target network
+        """
+        raise NotImplementedError
+
+
+    def add_loss_op(self, output_op, target_output_op):
+        """
+        Return tensorflow loss op
+        For Q network, set (Q_target - Q)^2
+        
+        Args:
+            output_op: Tf op for output from the network
+            target_output_op: tf op for output from the target network
+        """
+        raise NotImplementedError
+
+
+    def add_optimizer_op(self, scope):
+        """
+        Set training op wrt to loss for variable in scope
+        """
+        raise NotImplementedError
+
+
+    def process_state(self, state):
+        """
+        Processing of state
+
+        State placeholders are tf.uint8 for fast transfer to GPU
+        Need to cast it to float32 for the rest of the tf graph.
+
+        Args:
+            state: node of tf graph of shape = (batch_size, height, width, nchannels)
+                    of type tf.uint8.
+        """
+        state = tf.cast(state, tf.float32)
+
+        return state
+
+
+    def build(self):
+        """
+        Build model by adding all necessary variables
+        """
+        # add placeholders
+        self.add_placeholders_op()
+
+        # compute Q values of state
+        s = self.process_state(self.s)
+        self.features = self.get_features_op(s, scope=self.config.scope, reuse=False)
+        self.outputs = self.get_output_op(self.features, scope=self.config.scope, reuse=False)
+
+        # compute Q values of next state
+        sp = self.process_state(self.sp)
+        self.target_features = self.get_features_op(sp, scope=self.config.target_scope, reuse=False)
+        self.target_outputs = self.get_output_op(self.features, scope=self.config.target_scope, reuse=False)
+
+        # add update operator for target network
+        self.add_update_target_op(self.config.scope, self.config.target_scope)
+
+        # add square loss
+        self.add_loss_op(self.outputs, self.target_outputs)
+
+        # add optmizer for the main networks
+        self.add_optimizer_op(self.config.scope)
 
  
     def checkpoint(self, timestep):
@@ -96,6 +203,33 @@ class N(object):
     def initialize(self):
         """
         Initialize variables if necessary
+        """
+        raise NotImplementedError
+
+
+    def update_target_params(self):
+        """
+        Update params of target network
+        """
+        raise NotImplementedError
+
+
+    @property
+    def policy(self, state):
+        """
+        Returns a probability distribution function, taking states and returning probabilities over actions
+        """
+        return lambda state: self.get_action_distribution(state)
+
+
+    def get_action_distribution(self, state):
+        """
+        Returns a distribution over actions 
+    
+        Args:
+            state: tf variables for the current state of the game
+        Returns:
+            Probability distribution over actions         
         """
         raise NotImplementedError
 
@@ -204,8 +338,10 @@ class N(object):
             state = self.env.reset()
             states = []
             actions = []
-            rewards_guess = []
+            rewards = []
             next_states = []
+            done_mask = []
+            valuess_guess = []
             while True:
                 t += 1
                 last_eval += 1
@@ -231,9 +367,12 @@ class N(object):
                 # Guessing the rewards, to be corrected when the game finishes
                 states.append(self._board_from_state(state, player))
                 actions.append(action)
-                if t % 2 == 0: rewards_guess.append(1.0)
-                else: rewards_guess.append(-1.0)
+                rewards.append(reward)
                 next_states.append(self._board_from_state(new_state, player))
+                if done: done_mask.append(1.0)
+                else done_mask.append(0.0)
+                if t % 2 == 0: values_guess.append(1.0)
+                else: values_guess.append(-1.0)
 
                 # store the transition
                 state = new_state
@@ -263,11 +402,11 @@ class N(object):
                 # count reward
                 total_reward += reward
                 if done:
-                    # Update replay buffer, first making sure the rewards (we guessed) are correct
-                    # multiplying by (rewards[-1] * reward) is correct. If reward == 0 it zeros the array
-                    # if rewards[-1] == reward, then it's 1, if rewards != reward, then it's -1
-                    rewards = np.array(rewards_guess) * rewards_guess[-1] * reward
-                    replay_buffer.store_go(states, actions, rewards, next_states)
+                    # Update replay buffer, first making sure the values (we guessed) are correct
+                    # multiplying by (values[-1] * reward) is correct. If reward == 0 it zeros the array
+                    # if values[-1] == reward, then it's 1, if values[-1] != reward, then it's -1
+                    values = np.array(values_guess) * values_guess[-1] * reward
+                    replay_buffer.store_example_batch(states, actions, rewards, next_states, done_mask, values)
                     break
 
             # updates to perform at the end of an episode
@@ -298,7 +437,7 @@ class N(object):
         loss_eval, grad_eval = 0, 0
 
         # perform training step
-        if (t > self.config.learning_start and t % self.config.learning_freq == 0) and replay_buffer.should_sample():
+        if (t > self.config.learning_start and t % self.config.learning_freq == 0) and replay_buffer.should_sample:
             loss_eval, grad_eval = self.update_step(t, replay_buffer, lr)
 
         # occasionaly update target network with q network
@@ -384,84 +523,50 @@ class N(object):
 
 
 
-def QN(N):
+class QN(N):
     """
     'Abstract' class encapsulating a network that will learn a policy function
     These networks are learned using reinforcement lerarning
     """
-    @property
-    def policy(self, state):
-        """
-        Returns a probability distribution function, taking states and returning probabilities over actions
-        """
-        return lambda state: self.get_action_distribution(state)
 
 
-    def get_action_distribution(self, state):
-        """
-        Returns a distribution over actions 
-    
-        Args:
-            state: tf variables for the current state of the game
-        Returns:
-            Probability distribution over actions
-        """
-
-    def update_target_params(self):
-        """
-        Update params of Q' (target network) with params of Q
-        """
-        raise NotImplementedError
-
-
-
-
-def PN(N):
+class PN(N):
     """
     'Abstract' class encapsulating a network that will learn a policy function
     These networks are learned using reinforcement learning
+
+    N.B. This needs to overload the 'get_best_action" to somehow specify an old opponent
     """
-    @property
-    def policy(self, state):
+    def get_best_action(self, some_scope_thing):
         """
-        Returns a probability distribution function, taking states and returning probabilities over actions
+        Gets the best action for the network we're currently training, OR a network 
+        specified by "some_scope_thing"
         """
-        return lambda state: self.get_action_distribution(state)
+        pass
 
-
-    def get_action_distribution(self, state):
-        """
-        Returns a distribution over actions 
     
-        Args:
-            state: tf variables for the current state of the game
-        Returns:
-            Probability distribution over actions         
+    def save_opponent(self, some_scope_thing):
         """
-        raise NotImplementedError
-
-
-    def update_target_params(self):
+        Save the current params to be able to be used as an opponent later
         """
-        Update params of p' (target network) with params of p
-        """
-        raise NotImplementedError
+        pass
 
 
     def train(self, exp_schedule, lr_schedule):
         """
-        Performs training of Q
+        Performs training of p (this necessarily needs to be different to training for a p
+        network).
 
         Args:
             exp_schedule: Exploration instance s.t.
                 exp_schedule.get_action(best_action) returns an action
             lr_schedule: Schedule for learning rate
         """
-        pass
+        raise NotImplementedError
 
 
 
-def VN(N):
+class VN(N):
     """
     Class encapsulating a network that will learn a value function
     These networks are learned using supervised learning/regression, given data from self play with a 
@@ -475,7 +580,11 @@ def VN(N):
         # Furthermore, use that policy network to INITIALIZE variable in this network
         # Should be an INDEPENDENT copy, and not share variables
 
-
+    # Functions that should be implemented
+    def init_averages(self):
+        raise NotImplementedError
+    def update_averages(self, rewards, max_p_values, p_values, scores_eval):
+        raise NotImplementedError
     def train(self, exp_schedule, lr_schedule):
         raise NotImplementedError
     def train_step(self, t, replay_buffer, lr):
@@ -484,3 +593,16 @@ def VN(N):
         raise NotImplementedError
     def run(self, exp_schedule, lr_schedule):
         raise NotImplementedError
+    
+    # Functions that maybe should be implemented?
+    def update_target_params(self):
+        pass
+
+    # Functions that shouldn't be implemented
+    def get_best_action(self, state):
+        pass
+    def policy(self, state):
+        pass
+    def get_action_distribution(self, state):
+        pass
+        
