@@ -10,6 +10,8 @@ from collections import deque
 from util import get_logger, Progbar
 from replay_buffer import ReplayBuffer
 
+import tensorflow as tf
+
 
 class N(object):
     """
@@ -45,9 +47,9 @@ class N(object):
 
         # Store the board (state) shape, action shape and reward shape
         self.board_shape = self.env.state.board.encode().shape
-        self.action_shape = (1,)
-        self.reward_shape = (1,)
-        self.num_actions = self.env.actions_space.n
+        self.action_shape = ()
+        self.reward_shape = ()
+        self.num_actions = board_size ** 2
             
         # store hyper params
         self.config = config
@@ -67,12 +69,12 @@ class N(object):
         self.add_placeholders_op()
 
         # compute Q values of state
-        s = self.process_state(self.s)
-        self.outputs = self.get_output_op(s, scope=self.config.scope, reuse=False)
+        state = self.process_state(self.s)
+        self.outputs = self.get_output_op(state, scope=self.config.scope, reuse=False)
 
         # compute Q values of next state
-        sp = self.process_state(self.sp)
-        self.target_outputs = self.get_output_op(sp, scope=self.config.target_scope, reuse=False)
+        state_p = self.process_state(self.sp)
+        self.target_outputs = self.get_output_op(state_p, scope=self.config.target_scope, reuse=False)
 
         # add update operator for target network
         self.add_update_target_op(self.config.scope, self.config.target_scope)
@@ -156,7 +158,7 @@ class N(object):
         Returns:
             board: A np.ndarray with shape (3,s,s), where board[0] is the agents peices
         """
-        board = state.board.encode()
+        board = state #.board.encode()     # apparently states returned from env.reset and env.step are the np arrays
         if player != self.env.player_color:
             tmp = board[0]
             board[0] = board[1]
@@ -185,6 +187,8 @@ class N(object):
         If it's a p-network, then it should be the prob distr over actions
         THis function needs to take the features_op (the main part of the network) and then bolting 
         on another layer or two on the end
+
+        This must cr
 
         Args:
             state: The state (input to network)
@@ -386,7 +390,7 @@ class N(object):
             action: (int) the best action
             action_values: (np array) q/p values for all actions
         """
-        action_values = self.sess.run(self.q, feed_dict={self.s: [state]})[0]
+        action_values = self.sess.run(self.outputs, feed_dict={self.s: [state]})[0]
         return np.argmax(action_values), action_values
     
 
@@ -435,7 +439,7 @@ class N(object):
             rewards = []
             next_states = []
             done_mask = []
-            valuess_guess = []
+            values_guess = []
             while True:
                 t += 1
                 last_eval += 1
@@ -448,6 +452,7 @@ class N(object):
 
                 # chose action according to current state and exploration
                 best_action, action_dist = self.get_best_action(state)
+                print action_dist
                 action                   = exp_schedule.get_action(best_action, self.env)
 
                 # store q values
@@ -464,7 +469,7 @@ class N(object):
                 rewards.append(reward)
                 next_states.append(self._board_from_state(new_state, player))
                 if done: done_mask.append(1.0)
-                else done_mask.append(0.0)
+                else: done_mask.append(0.0)
                 if t % 2 == 0: values_guess.append(1.0)
                 else: values_guess.append(-1.0)
 
@@ -479,13 +484,12 @@ class N(object):
                 lr_schedule.update(t)
 
                 # logging stuff
-                if ((t > self.config.learning_start) and (t % self.config.log_freq == 0) and
-                   (t % self.config.learning_freq == 0)):
+                if ((t > self.config.learning_start) and (t % self.config.log_freq == 0)):
                     self.update_averages(rewards, max_p_values, p_values, scores_eval)
                     if len(rewards) > 0:
                         prog.update(t + 1, exact=[("Loss", loss_eval), ("Avg R", self.avg_reward), 
                                         ("Max R", np.max(rewards)), ("eps", exp_schedule.epsilon), 
-                                        ("Grads", grad_eval), ("Max Q", self.max_q), 
+                                        ("Grads", grad_eval), ("Max P", self.max_p), 
                                         ("lr", lr_schedule.epsilon)])
 
                 elif (t < self.config.learning_start) and (t % self.config.log_freq == 0):
@@ -531,7 +535,7 @@ class N(object):
         loss_eval, grad_eval = 0, 0
 
         # perform training step
-        if (t > self.config.learning_start and t % self.config.learning_freq == 0) and replay_buffer.should_sample:
+        if t > self.config.learning_start and replay_buffer.should_sample:
             loss_eval, grad_eval = self.update_step(t, replay_buffer, lr)
 
         # occasionaly update target network with q network
@@ -622,7 +626,7 @@ class N(object):
                 if self.config.render_test: env.render()
 
                 # Play a step
-                action = self.get_best_action(state)
+                action, _ = self.get_best_action(state)
                 new_state, reward, done, info = env.step(action)
                 state = new_state
 
@@ -692,6 +696,7 @@ class VN(N):
         # Probably pass in a policy network into the train for this
         # Furthermore, use that policy network to INITIALIZE variable in this network
         # Should be an INDEPENDENT copy, and not share variables
+        pass
 
     # Functions that should be implemented
     def init_averages(self):

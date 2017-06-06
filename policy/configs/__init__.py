@@ -1,0 +1,1 @@
+from basic_network_test_config import bntconfig
