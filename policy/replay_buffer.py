@@ -2,9 +2,9 @@ import numpy as np
 
 def prod(l):
     """
-    Helper to multiply all of the elements in a list
+    Helper to multiply all of the elements in a tuple
     """
-    return reduce(lambda x,y: x*y, l) 
+    return reduce(lambda x,y: x*y, (1,) + l) 
 
 
 class ReplayBufferError(Exception):
@@ -34,9 +34,9 @@ class ReplayBuffer(object):
         self._a_size = prod(a_shape)
         self._r_shape = r_shape
         self._r_size = prod(r_shape)
-        self._d_shape = (1,) # done mask only has 0/1 values
+        self._d_shape = () # done mask only has 0/1 values
         self._d_size = 1
-        self._v_shape = (1,) # values are floats
+        self._v_shape = () # values are floats
         self._v_size = 1
         self._sars_size = self._s_size * 2 + self._a_size \
                         + self._r_size + self._d_size + self._v_size

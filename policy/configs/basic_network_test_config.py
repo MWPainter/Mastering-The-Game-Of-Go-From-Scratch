@@ -1,7 +1,7 @@
 class bntconfig():
     # env config
     render_train     = False
-    render_test      = False
+    render_test      = True
     overwrite_render = True
     record           = False
 
@@ -19,7 +19,7 @@ class bntconfig():
     checkpoint_freq   = 5000
     gamma             = 0.99            # still want to discount, because prefer to win quick...
     log_freq          = 50
-    eval_freq         = 5000
+    eval_freq         = 2500
     soft_epsilon      = 0
 
     # output config
