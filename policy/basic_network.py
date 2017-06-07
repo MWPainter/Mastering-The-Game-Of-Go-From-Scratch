@@ -160,19 +160,23 @@ class BasicNetwork(N):
           x = tf.reshape(x, [-1, self.config.board_size**2]) # now shape = [batch_size, board_width **2]
           # now apply different bias to each position
           last_bias = tf.get_variable(name="last_conv_b",dtype=tf.float32, shape=[self.config.board_size**2], initializer=tf.zeros_initializer)
-          out = x + last_bias
+          logits = x + last_bias
+
+          # apply softmax
+          probs = tf.nn.softmax(logits)
+          out = probs
 
         # need to name this operation so we can access it for transfer learning
         # when loading the graph from the save
-        out = tf.identity(out, name='out')
+        out = tf.identity(out, name ='out')
 
         # NEVER SURRENDER
         #out = tf.pad(out,[[0,0],[0,2]])
 
         # export the meta graph now, so that it doesn't include optimizer variables
-        if scope=='q':
+        if scope==self.config.scope:
           graph = tf.get_default_graph()
-          tf.train.write_graph(graph, save_dir, 'graph_save.pb')
+          tf.train.write_graph(graph, self.config.output_path, self.config.model_name+'graph_save.pb')
 
         ##############################################################
         ######################## END YOUR CODE #######################
@@ -223,8 +227,11 @@ class BasicNetwork(N):
         ###self.loss = tf.reduce_mean((qsamp - qsa)**2)
 
         action_mask = tf.one_hot(self.a, self.num_actions)
-        output_sa = tf.boolean_mask(output_op, tf.cast(action_mask, tf.bool)) # set output for s,a in example
-        self.loss = tf.reduce_mean((output_sa - self.v) ** 2)
+        output_sa = tf.boolean_mask(output_op, tf.cast(action_mask, tf.bool)) # set output for s,a for the batch
+
+        self.loss = tf.reduce_mean(-tf.log(output_sa + 1e-07) * self.v)
+
+
 
 
     def add_optimizer_op(self, scope):
@@ -232,7 +239,7 @@ class BasicNetwork(N):
         Set training op wrt to loss for variable in scope
         """
         variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,scope=scope)
-        optimizer = tf.train.AdamOptimizer(learning_rate=self.lr)
+        optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.lr)
         grads_var_list = optimizer.compute_gradients(self.loss, variables)
         grads, variables = zip(*grads_var_list)
         if self.config.grad_clip:

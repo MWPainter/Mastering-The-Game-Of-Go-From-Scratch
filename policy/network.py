@@ -453,7 +453,7 @@ class N(object):
 
         t = last_eval = last_record = 0 # time control of nb of steps
         scores_eval = [] # list of scores computed at iteration time
-        scores_eval += [self.evaluate()]
+        scores_eval += [self.evaluate(t)]
         
         prog = Progbar(target=self.config.nsteps_train)
 
@@ -541,12 +541,12 @@ class N(object):
                 # evaluate our policy
                 last_eval = 0
                 print("")
-                scores_eval += [self.evaluate()]
+                scores_eval += [self.evaluate(t)]
 
         # last words
         self.logger.info("- Training done.")
         self.save()
-        scores_eval += [self.evaluate()]
+        scores_eval += [self.evaluate(t)]
 
 
     def train_step(self, t, replay_buffer, lr):
@@ -628,9 +628,12 @@ class N(object):
         raise NotImplementedError
 
 
-    def evaluate(self, env=None, num_episodes=None):
+    def evaluate(self, t, env=None, num_episodes=None):
         """
         Evaluation with same procedure as the training
+
+        Args:
+            t: timestep
         """
         # log our activity only if default call
         if num_episodes is None:
@@ -645,7 +648,8 @@ class N(object):
 
         state = env.reset()
         _, action_dist, _ = self.get_best_valid_action(state)
-        print action_dist.reshape((self.config.board_size,self.config.board_size))
+        print("Heatmap for initial state, at time " + str(t))
+        print(action_dist.reshape((self.config.board_size,self.config.board_size)))
 
         # replay memory to play
         rewards = []
