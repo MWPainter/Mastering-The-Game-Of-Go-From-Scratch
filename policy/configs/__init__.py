@@ -1,1 +1,1 @@
-from basic_network_test_config import bntconfig
+from .basic_network_test_config import bntconfig
