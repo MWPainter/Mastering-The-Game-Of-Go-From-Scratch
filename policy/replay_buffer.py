@@ -1,10 +1,11 @@
 import numpy as np
+import functools
 
 def prod(l):
     """
     Helper to multiply all of the elements in a tuple
     """
-    return reduce(lambda x,y: x*y, (1,) + l) 
+    return functools.reduce(lambda x,y: x*y, (1,) + l) 
 
 
 class ReplayBufferError(Exception):
@@ -214,7 +215,7 @@ if __name__ == "__main__":
     spsp = []
     dd = []
     vv = []
-    for i in xrange(3):
+    for i in range(3):
         s = np.array([[i,i],[i,i]])
         a = np.array([i])
         r = np.array([i])
@@ -228,13 +229,13 @@ if __name__ == "__main__":
         dd.append(d)
         vv.append(v)
     rb.store_example_batch(ss, aa, rr, spsp, dd, vv)
-    print rb._queue
-    print "Sample 1 (5 times):"
-    for _ in xrange(5): print rb.sample(1)
-    print "\n"
-    print "Sample 3:"
-    print rb.sample(3)
-    print "\n"
+    print(rb._queue)
+    print("Sample 1 (5 times):")
+    for _ in range(5): print(rb.sample(1))
+    print("\n")
+    print("Sample 3:")
+    print(rb.sample(3))
+    print("\n")
     rb.store_example(np.array([[3,3,],[3,3]]),
                      np.array([3]),
                      np.array([3]),
@@ -247,10 +248,10 @@ if __name__ == "__main__":
                      np.array([[3,3],[3,3]]),
                      [1.0],
                      [0.0])
-    print "Sample 3 (with 2 changed):"
-    print rb.sample(3)
-    print "\n"  
-    print "Intrnal queue (check is of length 3):"
-    print rb._queue
+    print("Sample 3 (with 2 changed):")
+    print(rb.sample(3))
+    print("\n"  )
+    print("Intrnal queue (check is of length 3):")
+    print(rb._queue)
 
 

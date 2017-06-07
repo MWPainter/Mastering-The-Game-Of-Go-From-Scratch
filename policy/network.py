@@ -532,7 +532,7 @@ class N(object):
                     # multiplying by (values[-1] * reward) is correct. If reward == 0 it zeros the array
                     # if values[-1] == reward, then it's 1, if values[-1] != reward, then it's -1
                     values = np.array(values_guess) * values_guess[-1] * reward
-                    discounts = np.array([self.config.gamma ** i for i in xrange(values.shape[0])])
+                    discounts = np.array([self.config.gamma ** i for i in range(values.shape[0])])
                     discounted_values = values * discounts
                     replay_buffer.store_example_batch(states, actions, episode_rewards, next_states, done_mask, discounted_values)
                     break
@@ -661,7 +661,7 @@ class N(object):
                 if self.config.render_test: env.render()
 
                 # Play a step
-                action, _, va = self.get_best_valid_action(state)
+                action, _, _ = self.get_best_valid_action(state)
                 new_state, reward, done, info = env.step(action)
                 state = new_state
 

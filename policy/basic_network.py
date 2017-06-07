@@ -18,7 +18,7 @@ from linear_schedule import LinearExploration, LinearSchedule
 from util import get_logger, Progbar
 from replay_buffer import ReplayBuffer
 
-import configs
+import policy.configs
 
 
 class BasicNetwork(N):
@@ -260,7 +260,7 @@ Some testing :)
 """
 if __name__ == '__main__':
     # Grab the test config
-    config = configs.bntconfig
+    config = policy.configs.bntconfig
 
     # exploration strategy
     exp_schedule = LinearExploration(config.eps_begin, config.eps_end, config.eps_nsteps)
