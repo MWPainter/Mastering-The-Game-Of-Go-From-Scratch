@@ -73,14 +73,14 @@ class N(object):
         self.outputs = self.get_output_op(state, scope=self.config.scope, reuse=False)
 
         # compute Q values of next state
-        state_p = self.process_state(self.sp)
-        self.target_outputs = self.get_output_op(state_p, scope=self.config.target_scope, reuse=False)
+        ###state_p = self.process_state(self.sp)
+        ###self.target_outputs = self.get_output_op(state_p, scope=self.config.target_scope, reuse=False)
 
         # add update operator for target network
         self.add_update_target_op(self.config.scope, self.config.target_scope)
 
         # add square loss
-        self.add_loss_op(self.outputs, self.target_outputs)
+        self.add_loss_op(self.outputs) ###, self.target_outputs)
 
         # add optmizer for the main networks
         self.add_optimizer_op(self.config.scope)
@@ -165,6 +165,30 @@ class N(object):
             board[1] = tmp
         return board
 
+
+    # Helper for get valid actions from an environment
+    def _get_valid_action_indices(self, state):
+        """
+        Get's all of the open board positions.
+        Converts those coordinates to action numbers
+        Returns that lis
+    
+        Args:
+            state: np.array of shape (3,board_size,board_size) for the state
+        Returns:
+            List of valid actions that an agent could take
+        """
+        # Get open board position
+        board_size = state.shape[0]
+        free_spaces = state[2]
+        non_zero_coords = np.transpose(np.nonzero(free_spaces))
+
+        # Get action numbers
+        non_zero_coords[:,0] *= board_size
+        actions = np.sum(non_zero_coords, axis=1)
+
+        # Return
+        return actions
 
 
 
@@ -380,18 +404,20 @@ class N(object):
         raise NotImplementedError
 
 
-    def get_best_action(self, state):
+    def get_best_valid_action(self, state):
         """
         Return best action (its the same regardless of if the function learned is p or Q)
 
         Args:
-            state: state to put into network
+            state: the state to get the best (valid) action for
         Returns:
             action: (int) the best action
             action_values: (np array) q/p values for all actions
+            valid_actions: (array) of indices that are valid
         """
+        valid_actions = self._get_valid_action_indices(state)
         action_values = self.sess.run(self.outputs, feed_dict={self.s: [state]})[0]
-        return np.argmax(action_values), action_values
+        return np.argmax(action_values[valid_actions]), action_values, valid_actions
     
 
     def update_target_params(self):
@@ -451,8 +477,9 @@ class N(object):
                 player = self.env.state.color
 
                 # chose action according to current state and exploration
-                best_action, action_dist = self.get_best_action(self._board_from_player_perspective(state,player))
-                action                   = exp_schedule.get_action(best_action, self.env)
+                player_perspective_board = self._board_from_player_perspective(state,player)
+                best_action, action_dist, valid_actions = self.get_best_valid_action(player_perspective_board)
+                action                                  = exp_schedule.get_action(best_action, valid_actions)
 
                 # store q values
                 max_p_values.append(max(action_dist))
@@ -465,6 +492,7 @@ class N(object):
                 # Guessing the rewards, to be corrected when the game finishes
                 states.append(self._board_from_player_perspective(state, player))
                 actions.append(action)
+                rewards.append(reward)
                 episode_rewards.append(reward)
                 next_states.append(self._board_from_player_perspective(new_state, player))
                 if done: done_mask.append(1.0)
@@ -508,9 +536,6 @@ class N(object):
                     replay_buffer.store_example_batch(states, actions, episode_rewards, next_states, done_mask, discounted_values)
                     break
 
-            # updates to perform at the end of an episode
-            rewards.append(total_reward)          
-
             if (t > self.config.learning_start) and (last_eval > self.config.eval_freq):
                 # evaluate our policy
                 last_eval = 0
@@ -521,7 +546,6 @@ class N(object):
         self.logger.info("- Training done.")
         self.save()
         scores_eval += [self.evaluate()]
-        export_plot(scores_eval, "Scores", self.config.plot_output)
 
 
     def train_step(self, t, replay_buffer, lr):
@@ -562,17 +586,18 @@ class N(object):
             loss: (Q - Q_target)^2
         """
 
-        s_batch, a_batch, r_batch, sp_batch, done_mask_batch, _ = replay_buffer.sample(
-            self.config.batch_size)
+        ###s_batch, a_batch, r_batch, sp_batch, done_mask_batch, _ = replay_buffer.sample(self.config.batch_size)
+        s_batch, a_batch, _, _, _, v_batch = replay_buffer.sample(self.config.batch_size)
 
 
         fd = {
             # inputs
             self.s: s_batch,
             self.a: a_batch,
-            self.r: r_batch,
-            self.sp: sp_batch, 
-            self.done_mask: done_mask_batch,
+            ###self.r: r_batch,
+            ###self.sp: sp_batch, 
+            ###self.done_mask: done_mask_batch,
+            self.v: v_batch,
             self.lr: lr, 
             # extra info
             self.avg_reward_placeholder: self.avg_reward, 
@@ -627,7 +652,8 @@ class N(object):
                 if self.config.render_test: env.render()
 
                 # Play a step
-                action, _ = self.get_best_action(state)
+                action, _, _ = self.get_best_valid_action(state)
+                print action
                 new_state, reward, done, info = env.step(action)
                 state = new_state
 
@@ -718,7 +744,7 @@ class VN(N):
         pass
 
     # Functions that shouldn't be implemented
-    def get_best_action(self, state):
+    def get_best_valid_action(self, state):
         pass
     def policy(self, state):
         pass

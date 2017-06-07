@@ -47,14 +47,16 @@ class BasicNetwork(N):
                           shape = (batch_size)
                           note that this placeholder contains bool = True only if we are 
                           done in the relevant transition
+        - self.v: batch of value functions (sum of *discounted* rewards)
         - self.lr: learning rate, type = float32
         """
         state_shape = self.board_shape
         self.s = tf.placeholder(name="state_input", dtype=tf.uint8, shape=(None, state_shape[0], state_shape[1], state_shape[2])) 
         self.a = tf.placeholder(dtype=tf.int32, shape=(None,)) 
-        self.r = tf.placeholder(dtype=tf.float32, shape=(None,)) 
-        self.sp = tf.placeholder(dtype=tf.uint8, shape=(None, state_shape[0], state_shape[1], state_shape[2])) 
-        self.done_mask = tf.placeholder(dtype=tf.bool, shape=(None,)) 
+        ###self.r = tf.placeholder(dtype=tf.float32, shape=(None,)) 
+        ###self.sp = tf.placeholder(dtype=tf.uint8, shape=(None, state_shape[0], state_shape[1], state_shape[2])) 
+        ###self.done_mask = tf.placeholder(dtype=tf.bool, shape=(None,)) 
+        self.v = tf.placeholder(dtype=tf.float32, shape=(None,))
         self.lr = tf.placeholder(dtype=tf.float32) 
 
 
@@ -199,7 +201,7 @@ class BasicNetwork(N):
         self.update_target_op = tf.group(*ops)
 
 
-    def add_loss_op(self, output_op, target_output_op):
+    def add_loss_op(self, output_op): ###, target_output_op):
         """
         Return tensorflow loss op
         For Q network, set (Q_target - Q)^2
@@ -208,17 +210,21 @@ class BasicNetwork(N):
             output_op: Tf op for output from the network
             target_output_op: tf op for output from the target network
         """
-        num_actions = self.num_actions
-        q = output_op                       # use same logic from q learning
-        target_q = target_output_op         # use same logic from q learning
-        gamma = self.config.gamma
-        mask = tf.logical_not(self.done_mask)
+        ###num_actions = self.num_actions
+        ###q = output_op                       # use same logic from q learning
+        ###target_q = target_output_op         # use same logic from q learning
+        ###gamma = self.config.gamma
+        ###mask = tf.logical_not(self.done_mask)
 
-        adjust = gamma * tf.reduce_max(target_q, axis=(1,)) * tf.cast(mask, tf.float32)
-        qsamp = self.r + adjust
-        action_mask = tf.one_hot(self.a, num_actions)
-        qsa = tf.boolean_mask(q, tf.cast(action_mask, tf.bool))
-        self.loss = tf.reduce_mean((qsamp - qsa)**2)
+        ###adjust = gamma * tf.reduce_max(target_q, axis=(1,)) * tf.cast(mask, tf.float32)
+        ###qsamp = self.r + adjust
+        ###action_mask = tf.one_hot(self.a, num_actions)
+        ###qsa = tf.boolean_mask(q, tf.cast(action_mask, tf.bool))
+        ###self.loss = tf.reduce_mean((qsamp - qsa)**2)
+
+        action_mask = tf.one_hot(self.a, self.num_actions)
+        output_sa = tf.boolean_mask(output_op, tf.cast(action_mask, tf.bool)) # set output for s,a in example
+        self.loss = tf.reduce_mean((output_sa - self.v) ** 2)
 
 
     def add_optimizer_op(self, scope):
@@ -256,7 +262,7 @@ if __name__ == '__main__':
     lr_schedule  = LinearSchedule(config.lr_begin, config.lr_end, config.lr_nsteps)
 
     # train model
-    model = BasicNetwork(5, config)
+    model = BasicNetwork(config.board_size, config)
     model.run(exp_schedule, lr_schedule)
 
 

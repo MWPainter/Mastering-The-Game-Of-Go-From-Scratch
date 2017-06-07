@@ -32,44 +32,19 @@ class LinearSchedule(object):
             alpha = float(t) / float(self.nsteps)
             self.epsilon = (1.0 - alpha) * self.eps_begin + alpha * self.eps_end
 
-# Helper for get_action function
-def _get_valid_action_indices(env):
-    """
-    Get's all of the open board positions.
-    Converts those coordinates to action numbers
-    Returns that lis
-
-    Args:
-        env: (open AI environment) 
-    Returns:
-        List of valid actions that an agent could take
-    """
-    # Get open board position
-    state = env.state.board.encode()            
-    board_size = state.shape[0]
-    free_spaces = state[2]
-    non_zero_coords = np.transpose(np.nonzero(free_spaces))
-
-    # Get action numbers
-    non_zero_coords[:,0] *= board_size
-    actions = np.sum(non_zero_coords, axis=1)
-
-    # Return
-    return actions
 
 
 class LinearExploration(LinearSchedule):
-    def get_action(self, best_action, env):
+    def get_action(self, best_action, valid_actions):
         """
         Returns a randomi (valid) action with prob epsilon, otherwise return the best_action
 
         Args:
             best_action: (int) best action according some policy
-            env: (open AI environment) used to sample a random (valid) action if necessary
+            valid_actions: list of valid actions that we may take
         Returns:
             an action (after epsilon greedy)
         """
         if random() < self.epsilon:
-            actions = _get_valid_action_indices(env)
-            return np.random.choice(actions, 1)[0]
+            return np.random.choice(valid_actions, 1)[0]
         return best_action
