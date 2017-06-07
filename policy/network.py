@@ -40,7 +40,8 @@ class N(object):
 
         # Create the environments to use (and reset to populate them with info)
         self.board_size = board_size
-        self.env = gym.make(self._self_play_env_name)
+        #self.env = gym.make(self._self_play_env_name)
+        self.env = gym.make(self._pachi_env_name)
         self.env.reset()
         self.pachi_env = gym.make(self._pachi_env_name)
         self.pachi_env.reset()
@@ -179,12 +180,11 @@ class N(object):
             List of valid actions that an agent could take
         """
         # Get open board position
-        board_size = state.shape[0]
         free_spaces = state[2]
         non_zero_coords = np.transpose(np.nonzero(free_spaces))
 
         # Get action numbers
-        non_zero_coords[:,0] *= board_size
+        non_zero_coords[:,0] *= self.config.board_size
         actions = np.sum(non_zero_coords, axis=1)
 
         # Return
@@ -285,7 +285,7 @@ class N(object):
         """
         if not os.path.exists(self.config.model_checkpoint_output):
             os.makedirs(self.config.model_checkpoint_output)
-        self.saver.save(self.sess, self.config.model_checkpoint_output + '.' + str(timestep))
+        self.saver.save(self.sess, self.config.model_checkpoint_output + str(timestep))
 
 
     def save(self):
@@ -417,7 +417,8 @@ class N(object):
         """
         valid_actions = self._get_valid_action_indices(state)
         action_values = self.sess.run(self.outputs, feed_dict={self.s: [state]})[0]
-        return np.argmax(action_values[valid_actions]), action_values, valid_actions
+        best_action_idx = np.argmax(action_values[valid_actions])      # get index into valid_actions of the best action to take
+        return valid_actions[best_action_idx], action_values, valid_actions
     
 
     def update_target_params(self):
@@ -642,6 +643,10 @@ class N(object):
         if env is None:
             env = self.pachi_env
 
+        state = env.reset()
+        _, action_dist, _ = self.get_best_valid_action(state)
+        print action_dist.reshape((self.config.board_size,self.config.board_size))
+
         # replay memory to play
         rewards = []
 
@@ -652,8 +657,7 @@ class N(object):
                 if self.config.render_test: env.render()
 
                 # Play a step
-                action, _, _ = self.get_best_valid_action(state)
-                print action
+                action, _, va = self.get_best_valid_action(state)
                 new_state, reward, done, info = env.step(action)
                 state = new_state
 
