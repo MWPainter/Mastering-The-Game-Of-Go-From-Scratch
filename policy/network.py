@@ -139,7 +139,7 @@ class N(object):
                             + '-v0'
 
 
-    def _board_from_state(self, state, player):
+    def _board_from_player_perspective(self, state, player):
         """
         Helper to get the board (as a np.ndarray with shape (3,s,s) if s is the size of the board)
         the encapsulates the game state. Used in train below
@@ -436,7 +436,7 @@ class N(object):
             state = self.env.reset()
             states = []
             actions = []
-            rewards = []
+            episode_rewards = []
             next_states = []
             done_mask = []
             values_guess = []
@@ -451,8 +451,7 @@ class N(object):
                 player = self.env.state.color
 
                 # chose action according to current state and exploration
-                best_action, action_dist = self.get_best_action(state)
-                print action_dist
+                best_action, action_dist = self.get_best_action(self._board_from_player_perspective(state,player))
                 action                   = exp_schedule.get_action(best_action, self.env)
 
                 # store q values
@@ -464,10 +463,10 @@ class N(object):
 
                 # Store the s, a, new_s, for later use in replay buffer
                 # Guessing the rewards, to be corrected when the game finishes
-                states.append(self._board_from_state(state, player))
+                states.append(self._board_from_player_perspective(state, player))
                 actions.append(action)
-                rewards.append(reward)
-                next_states.append(self._board_from_state(new_state, player))
+                episode_rewards.append(reward)
+                next_states.append(self._board_from_player_perspective(new_state, player))
                 if done: done_mask.append(1.0)
                 else: done_mask.append(0.0)
                 if t % 2 == 0: values_guess.append(1.0)
@@ -504,7 +503,9 @@ class N(object):
                     # multiplying by (values[-1] * reward) is correct. If reward == 0 it zeros the array
                     # if values[-1] == reward, then it's 1, if values[-1] != reward, then it's -1
                     values = np.array(values_guess) * values_guess[-1] * reward
-                    replay_buffer.store_example_batch(states, actions, rewards, next_states, done_mask, values)
+                    discounts = np.array([self.config.gamma ** i for i in xrange(values.shape[0])])
+                    discounted_values = values * discounts
+                    replay_buffer.store_example_batch(states, actions, episode_rewards, next_states, done_mask, discounted_values)
                     break
 
             # updates to perform at the end of an episode
