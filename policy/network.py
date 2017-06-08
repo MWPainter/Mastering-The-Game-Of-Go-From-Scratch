@@ -191,6 +191,27 @@ class N(object):
         return actions
 
 
+    def _sample_from_dist(self, prob_dist):
+        """
+        Sample from the prob distribution
+
+        Args:
+            prob_dist: (np.array) a probability distribution over actions (assumes 1D)
+        Returns:
+            action: the action/index into prob_dist, sampled according to prob_dist
+        """
+        total = np.sum(prob_dist)
+        key = random.uniform(0, total)
+        running_total = 0.0
+        for idx in range(prob_dist.shape[0]):
+            prob = prob_dist[idx]
+            running_total += prob
+            if running_total > key:
+                return idx
+        raise Exception('Shoudl not reach here')
+
+
+
 
 
     ###########################################
@@ -401,7 +422,24 @@ class N(object):
         Returns:
             Probability distribution over actions         
         """
-        raise NotImplementedError
+        return self.sess.run(self.outputs, feed_dict={self.s: [state]})[0]
+
+
+    def sample_valid_action(self, state):
+        """
+        Return an action sampled from the probability distribution defined over valid actions
+        
+        Args:
+            state: the state for which to sample an action for
+        Returns:
+            action: (int) the sampled action
+            action_values: (np array) q/p values for all actions
+            valid_actions: (array) set of actions that are valid moves (free spaces on a go board)
+        """
+        valid_actions = self._get_valid_action_indices(state)
+        action_values = self.sess.run(self.outputs, feed_dict={self.s: [state]})[0]
+        action_idx = self._sample_from_dist(action_values[valid_actions])
+        return valid_actions[action_idx], action_values, valid_actions
 
 
     def get_best_valid_action(self, state):
@@ -413,7 +451,7 @@ class N(object):
         Returns:
             action: (int) the best action
             action_values: (np array) q/p values for all actions
-            valid_actions: (array) of indices that are valid
+            valid_actions: (array) set of actions that are valid moves (free spaces on a go board)
         """
         valid_actions = self._get_valid_action_indices(state)
         action_values = self.sess.run(self.outputs, feed_dict={self.s: [state]})[0]
