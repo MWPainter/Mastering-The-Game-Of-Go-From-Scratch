@@ -517,7 +517,7 @@ class N(object):
 
                 # chose action according to current state and exploration
                 player_perspective_board = self._board_from_player_perspective(state,player)
-                best_action, action_dist, valid_actions = self.get_best_valid_action(player_perspective_board)
+                best_action, action_dist, valid_actions = self.sample_valid_action(player_perspective_board)
                 action                                  = exp_schedule.get_action(best_action, valid_actions)
 
                 # store q values
