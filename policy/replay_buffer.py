@@ -18,8 +18,12 @@ class ReplayBufferError(Exception):
 class ReplayBuffer(object):
     """
     Replay buffer used to sample mini batches of SARS examples for 
+    N.B. The original version of this used to be a general replay buffer.
+    N.B.B. To return to original state, remove "exploit symmetry" functions, 
+           and allow shapes to be set by args in constructor
+           and remove the need to add values probably (likely wouldn't know this in a general setting)
     """
-    def __init__(self, size, s_shape, a_shape, r_shape, board_size):
+    def __init__(self, size, board_size):
         """
         Args:
             size: the size of the replay buffer
@@ -31,12 +35,12 @@ class ReplayBuffer(object):
         self._size = size
         self._contains = 0
         self._board_size = board_size
-        self._s_shape = s_shape
-        self._s_size = prod(s_shape)
-        self._a_shape = a_shape
-        self._a_size = prod(a_shape)
-        self._r_shape = r_shape
-        self._r_size = prod(r_shape)
+        self._s_shape = (3, board_size, board_size)
+        self._s_size = prod(self._s_shape)
+        self._a_shape = ()
+        self._a_size = prod(self._a_shape)
+        self._r_shape = ()
+        self._r_size = prod(self._r_shape)
         self._d_shape = () # done mask only has 0/1 values
         self._d_size = 1
         self._v_shape = () # values are floats
@@ -133,10 +137,10 @@ class ReplayBuffer(object):
         Returns:
             action: np.ndarray of actions, shape of (n,)
         """
-        return np.flatten(action[:,0] * self._board_size + action[:,1])
+        return (coord[:,1] * self._board_size + coord[:,0]).flatten()
 
 
-    def _reflect_coord(self, coord):
+    def _reflect_coord(self, coords):
         """
         Returns reflected coords 
 
@@ -145,7 +149,7 @@ class ReplayBuffer(object):
         Returns:
             coords: reflected coords
         """
-        coords[:,1] = self._board_size - coords[:,1]
+        coords[:,0] = self._board_size - 1 - coords[:,0]
         return coords
 
     
@@ -215,14 +219,14 @@ class ReplayBuffer(object):
 
         # Apply reflections
         if reflect:
-            s_arr_tran = self._reflect_state(s_arr_tran)
+            s_arr_trans = self._reflect_state(s_arr_trans)
             coords = self._reflect_coord(coords)
-            sp_arr_tran = self._reflect_state(sp_arr_tran)
+            sp_arr_trans = self._reflect_state(sp_arr_trans)
 
         # Apply rotations
-        s_arr_tran = np.rot90(s_arr_tran, rot, (3,2))
+        s_arr_trans = np.rot90(s_arr_trans, rot, (3,2))
         coords = self._rotate_coord(coords, rot)
-        sp_arr_tran = np.rot90(sp_arr_tran, rot, (3,2))
+        sp_arr_trans = np.rot90(sp_arr_trans, rot, (3,2))
 
         # Conver back to actions from coords
         a_arr_trans = self._coord_to_action(coords)
@@ -280,7 +284,7 @@ class ReplayBuffer(object):
             end = old_arr_len * (i+1)
             reflect = ((i // 4) == 1)
             rot = i % 4
-            s,a,sp = self_apply_transform(reflect, rot, s_arr, a_rr, sp_arr)
+            s,a,sp = self._apply_transform(reflect, rot, s_arr, a_arr, sp_arr)
 
             new_s_arr[beg:end] = s
             new_a_arr[beg:end] = a
@@ -298,13 +302,19 @@ class ReplayBuffer(object):
         reord_new_d_arr = np.zeros((arr_len,))
         reord_new_v_arr = np.zeros((arr_len,))
 
-        for i in range(8):
-            reord_new_s_arr = new_s_arr[i::8]
-            reord_new_a_arr = new_a_arr[i::8]
-            reord_new_r_arr = new_r_arr[i::8]
-            reord_new_sp_arr = new_sp_arr[i::8]
-            reord_new_d_arr = new_d_arr[i::8]
-            reord_new_v_arr = new_v_arr[i::8]
+        for i in range(old_arr_len):
+            beg = 8 * i
+            end = 8 * (i+1)
+            reord_new_s_arr[beg:end] = new_s_arr[i::old_arr_len]
+            reord_new_a_arr[beg:end] = new_a_arr[i::old_arr_len]
+            reord_new_r_arr[beg:end] = new_r_arr[i::old_arr_len]
+            reord_new_sp_arr[beg:end] = new_sp_arr[i::old_arr_len]
+            reord_new_d_arr[beg:end] = new_d_arr[i::old_arr_len]
+            reord_new_v_arr[beg:end] = new_v_arr[i::old_arr_len]
+
+        return reord_new_s_arr, reord_new_a_arr, \
+               reord_new_r_arr, reord_new_sp_arr, \
+               reord_new_d_arr, reord_new_v_arr
 
 
     def _decode_sarses(self, sarses):
@@ -374,11 +384,11 @@ class ReplayBuffer(object):
             v_arr: np.ndarry of values for the state (we know the actual value of a game after its done)
         """
         s_arr = np.array(s_arr)
-        a_arr = np.array(a_arr)
-        r_arr = np.array(r_arr)
+        a_arr = np.array(a_arr).flatten() # flatten to not have to deal with (n,) vs (n,1) shapes
+        r_arr = np.array(r_arr).flatten()
         sp_arr = np.array(sp_arr)
-        done_mask = np.array(done_mask)
-        v_arr = np.array(v_arr)
+        done_mask = np.array(done_mask).flatten()
+        v_arr = np.array(v_arr).flatten()
 
         s_arr,a_arr,r_arr,sp_arr,done_mask,v_arr = self._exploit_symmetries(s_arr,a_arr,r_arr,sp_arr,done_mask,v_arr)
         sarses = self._encode_sarses(s_arr, a_arr, r_arr, sp_arr, done_mask, v_arr)
@@ -413,7 +423,7 @@ Include a main function for some testing
 Manually check that the values make sense
 """
 if __name__ == "__main__":
-    rb = ReplayBuffer(3*8, (2,2), (1,), (1,))
+    rb = ReplayBuffer(3*8, 2)
     ss = []
     aa = []
     rr = []
@@ -421,10 +431,20 @@ if __name__ == "__main__":
     dd = []
     vv = []
     for i in range(3):
-        s = np.array([[i,i],[i,i]])
+        s = np.array([[[i,i],
+                       [i,i]],
+                      [[i,i],
+                       [i,i]],
+                      [[i,i],
+                       [i,i]]])
         a = np.array([i])
         r = np.array([i])
-        sp = np.array([[i+1,i],[i,i+1]])
+        sp = np.array([[[i+1,i],
+                       [i,i+1]],
+                      [[i+1,i],
+                       [i,i+1]],
+                      [[i+1,i],
+                       [i,i+1]]])
         d = np.array([0.0] if i != 2 else [1.0])
         v = np.array([-1.0] if i != 1 else [1.0])
         ss.append(s)
@@ -441,19 +461,24 @@ if __name__ == "__main__":
     print("Sample 3:")
     print(rb.sample(3))
     print("\n")
-    rb.store_example(np.array([[3,3,],[3,3]]),
-                     np.array([3]),
-                     np.array([3]),
-                     np.array([[3,3],[3,4]]),
-                     [1.0],
-                     [0.0])
-    rb.store_example(np.array([[3,3,],[3,3]]),
-                     np.array([3]),
-                     np.array([3]),
-                     np.array([[3,3],[3,3]]),
-                     [1.0],
-                     [0.0])
-    print("Sample 3 (with 2 changed):")
+    for _ in range(3):
+        rb.store_example(np.array([[[0,1],
+                                    [1,0]],
+                                   [[1,0],
+                                    [0,0]],
+                                   [[0,0],
+                                    [0,1]]]),
+                         np.array([3]),
+                         np.array([3]),
+                         np.array([[[0,1],
+                                    [1,1]],
+                                   [[1,0],
+                                    [0,0]],
+                                   [[0,0],
+                                    [0,0]]]),
+                         [1.0],
+                         [0.0])
+    print("Sample 3 (with all changed to be same example):")
     print(rb.sample(3))
     print("\n"  )
     print("Intrnal queue (check is of length 3):")
