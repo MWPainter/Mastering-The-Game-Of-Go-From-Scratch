@@ -39,33 +39,28 @@ class BasicNetwork(N):
                   shape = (batch_size, board_size, board_size, 3)
         - self.a: batch of actions, type = int32
                   shape = (batch_size)
-        - self.r: batch of rewards, type = float32
-                  shape = (batch_size)
-        - self.sp: batch of next states, type = uint8
-                   shape = (batch_size, board_size, board_size, 3)
-        - self.done_mask: batch of done, type = bool
-                          shape = (batch_size)
-                          note that this placeholder contains bool = True only if we are 
-                          done in the relevant transition
         - self.v: batch of value functions (sum of *discounted* rewards)
         - self.lr: learning rate, type = float32
         """
         state_shape = self.board_shape
         self.s = tf.placeholder(name="state_input", dtype=tf.uint8, shape=(None, state_shape[0], state_shape[1], state_shape[2])) 
         self.a = tf.placeholder(dtype=tf.int32, shape=(None,)) 
-        ###self.r = tf.placeholder(dtype=tf.float32, shape=(None,)) 
-        ###self.sp = tf.placeholder(dtype=tf.uint8, shape=(None, state_shape[0], state_shape[1], state_shape[2])) 
-        ###self.done_mask = tf.placeholder(dtype=tf.bool, shape=(None,)) 
         self.v = tf.placeholder(dtype=tf.float32, shape=(None,))
         self.lr = tf.placeholder(dtype=tf.float32) 
 
 
-
     def get_opponent_out(self, opponent_f):
+        """
+        Return an op for a graph with old weights (from freezing it)
+
+        Args:
+            opponent_f: the path to the frozen graph to turn into an opponent
+        """
         with gfile.FastGFile(opponent_f, 'rb') as f:
           graph_def = tf.GraphDef()
           graph_def.ParseFromString(f.read())
         return tf.import_graph_def(graph_def, input_map={"state_input:0" : self.s}, return_elements=['out:0'])[0]
+
 
     def get_output_op(self, state, scope, reuse=False):
         """
@@ -79,166 +74,115 @@ class BasicNetwork(N):
             state: tf variable for the input to the network (i.e. the state is the input to the network)
             scope: scope to use with the network
             reuse: reuse variables
+        Returns:
+            output: a tf op, that when given a state and run, will output a probability distribution over actions
+            logits: a tf op, returning the logits passed to the sofmax 
         """
-        # this information might be useful
+        # initialize variables
         num_actions = self.num_actions
-        out = state
-        
-
-        ##############################################################
-        """
-        TODO: implement a fully connected with no hidden layer (linear
-            approximation) using tensorflow. In other words, if your state s
-            has a flattened shape of n, and you have m actions, the result of 
-            your computation sould be equal to
-                W s where W is a matrix of shape m x n
-
-        HINT: you may find tensorflow.contrib.layers useful (imported)
-              make sure to understand the use of the scope param
-
-              you can use any other methods from tensorflow
-              you are not allowed to import extra packages (like keras,
-              lasagne, cafe, etc.)
-        """
-        ##############################################################
-        ################ YOUR CODE HERE - 2-3 lines ################## 
         state_shape = list(self.env.observation_space.shape)
         input_channels = state_shape[0] 
         flat_input_size = state_shape[0]*state_shape[1]*state_shape[2]
 
+        # go states are (3, n, n), where 3 is number of channels
+        # so state is (batch_size, 3, n, n)
+        # but really we want it to be (batch_size, n, n, 3) for conv2d layers
         state = tf.transpose(state, [0,2,3,1]) # go inputs have channels first, need to transpose
 
-
-        num_small_forwards = 1 # TODO IMPLEMENT AND TEST THIS
-
-        ###########################################################
-        # Policy Convolution Network (same architecture as paper) #
-        ###########################################################
-        # this happens regardless of whether we are transfer learning or not.
-        conv_layers_before_transfer = 3 
-        total_conv_layers = 5 # total conv layers is 12 in paper (not including final 1x1 layer)
-        k = 32 # this is 192 in the paper
-
-        board_rep = None
-
-        with tf.variable_scope(scope):
-          x = state
-          for i in range(conv_layers_before_transfer):
-            kernel_size = 5 if i == 1 else 3
-            with tf.variable_scope("layer_%d" % i):
-              x = layers.conv2d(
-                            inputs=x, 
-                            num_outputs=k, 
-                            kernel_size=kernel_size,
-                            stride=1,
-                            padding='SAME',
-                            activation_fn=tf.nn.relu,
-                            biases_initializer=tf.zeros_initializer)
-          board_rep = x # this will be concatenated with board representations from
-                        # the transfer learning, and then passed through the remainder
-                        # of the convolutional layers
-
-
-        # now, continue the policy network convolution on the board rep
-        with tf.variable_scope(scope):
-          x = board_rep
-          for i in range(conv_layers_before_transfer, total_conv_layers):
-            kernel_size = 5 if i == 1 else 3 # this line isn't really necessary here
-            with tf.variable_scope("layer_%d" % i):
-              x = layers.conv2d(
-                            inputs=x, 
-                            num_outputs=k, 
-                            kernel_size=kernel_size,
-                            stride=1,
-                            padding='SAME',
-                            activation_fn=tf.nn.relu,
-                            biases_initializer=tf.zeros_initializer)
+        # Build a base cnn with 5 layers, and 32 filters
+        board_rep = self._build_pure_convolution(inpt=state, num_layers=5, num_filters=32, scope=scope)
                
-        x = tf.identity(x, name='final_features') # for transfer learning
-        logits = None
-        with tf.variable_scope(scope):
-          # last layer: kernel_size 1, one filter, and different bias for each position (action)
-          x = layers.conv2d(
-                        inputs=x, 
-                        num_outputs=1, 
-                        kernel_size=1,
-                        stride=1)
-          # x now has shape [batch_size, board_width, board_width, 1]
-          x = tf.reshape(x, [-1, self.config.board_size**2]) # now shape = [batch_size, board_width **2]
-          # now apply different bias to each position
-          last_bias = tf.get_variable(name="last_conv_b",dtype=tf.float32, shape=[self.config.board_size**2], initializer=tf.zeros_initializer)
-          logits = x + last_bias
-
-          # apply softmax
-          probs = tf.nn.softmax(logits)
-          out = probs
+        # Build the output layers (1x1 convolution + softmax)
+        output, logits = self._add_output_layers(inpt=board_rep
 
         # need to name this operation so we can access it for transfer learning
         # when loading the graph from the save
-        out = tf.identity(out, name ='out')
-
-        # NEVER SURRENDER
-        #out = tf.pad(out,[[0,0],[0,2]])
+        output = tf.identity(output, name ='output')
 
         # export the meta graph now, so that it doesn't include optimizer variables
         if scope==self.config.scope:
           graph = tf.get_default_graph()
           tf.train.write_graph(graph, self.config.output_path, self.config.graph_name)
 
-        ##############################################################
-        ######################## END YOUR CODE #######################
-
-        return out, logits
+        return output, logits
 
 
-
-
-
-    def add_update_target_op(self, scope, target_scope):
+    def _build_pure_convolution(self, inpt, num_layers, num_filters, scope):
         """
-        Returns the update target op
-        When run it should copy the variables from inside scope 'scope' to scope 'target_scope'
-        It's called periodically to update the target network
-    
+        Construct a convolutional neural network, with output the same shape as the input
+        First layer is a 5x5 convolution with stride of 1
+        All subsequent layers are a 3x3 convolution with stride of 1
+
         Args:
-            scope: name of the scope of variables in the network being trained
-            target_scope: name of the scope of variables in the target network
+            inpt: tf op for the input to the convolutional layers
+            num_layers: the number of layers we should build in the CNN
+            num_filters: the number of filters (in all layers) that we should use
+            scope: tf variable scope to use
+        Returns:
+            The next layer to 
         """
-        varss = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=scope)
-        target_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=target_scope)
-        ops = []
-        for (v,tv) in zip(varss,target_vars):
-            ops += [tf.assign(tv, v)]
-        self.update_target_op = tf.group(*ops)
+        next_layer = inpt
+        with tf.variable_scope(scope):
+            for i in range(num_layers):
+                kernel_size = 5 if i == 0 else 3
+                with tf.variable_scope("layer_%d" % i):
+                    next_layer = layers.conv2d(
+                                            inputs=next_layer,
+                                            num_outputs=num_filters,
+                                            stride=1,
+                                            padding='SAME',
+                                            activation_fn=tf.nn.relu,
+                                            biases_initializer=tf.zeros_initializer)
+        return next_layer
 
 
-    def add_loss_op(self, output_op): ###, target_output_op):
+    def _add_output_layers(self, inpt, scope):
         """
-        Return tensorflow loss op
-        For Q network, set (Q_target - Q)^2
+        Adds a 1x1 convolution and a linear activation to compute logits
+        We have a kernel of size 1, with stride of 1, each with a seperate bias
+        Passes logits through a softmax activation
+
+        Args:
+            inpt: the output from previous layers in the network (the features)
+            scope: tf variable scope to use
+        Returns:
+            probs: tf op that will evaluate to a probability distribution over actions
+            logits: the tf op input to the softmax activation, to be used in further (composite) parts of the network
+        """
+        logits = None
+        out = None
+        with tf.variable_scope(scope):
+            # last layer: kernel_size 1, one filter, and different bias for each position (action)
+            x = layers.conv2d(
+                            inputs=inpts, 
+                            num_outputs=1, 
+                            kernel_size=1,
+                            stride=1)
+            # x has shape [batch_size, board_width, board_width, 1], so reshape to [batch_size, board_width**2]
+            x = tf.reshape(x, [-1, self.config.board_size**2]) 
+          
+            # apply different bias to each position
+            bias = tf.get_variable(name="last_conv_b",dtype=tf.float32, shape=[self.config.board_size**2], initializer=tf.zeros_initializer)
+            logits = x + last_bias
+    
+            # apply softmax
+            probs = tf.nn.softmax(logits)
+            out = probs
+        return out, logits
         
+
+    def add_loss_op(self, output_op): 
+        """
+        This implements a loss that will lead to updates with terms of the correct form for policy gradients
+
         Args:
             output_op: Tf op for output from the network
             target_output_op: tf op for output from the target network
         """
-        ###num_actions = self.num_actions
-        ###q = output_op                       # use same logic from q learning
-        ###target_q = target_output_op         # use same logic from q learning
-        ###gamma = self.config.gamma
-        ###mask = tf.logical_not(self.done_mask)
-
-        ###adjust = gamma * tf.reduce_max(target_q, axis=(1,)) * tf.cast(mask, tf.float32)
-        ###qsamp = self.r + adjust
-        ###action_mask = tf.one_hot(self.a, num_actions)
-        ###qsa = tf.boolean_mask(q, tf.cast(action_mask, tf.bool))
-        ###self.loss = tf.reduce_mean((qsamp - qsa)**2)
-
         action_mask = tf.one_hot(self.a, self.num_actions)
         output_sa = tf.boolean_mask(output_op, tf.cast(action_mask, tf.bool)) # set output for s,a for the batch
 
         self.loss = tf.reduce_mean(-tf.log(output_sa + 1e-07) * self.v)
-
-
 
 
     def add_optimizer_op(self, scope):
