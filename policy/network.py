@@ -195,9 +195,11 @@ class N(object):
         return actions
 
 
-    def _sample_from_dist(self, prob_dist):
+    def _sample_from_dist(self, prob_dist, default_value=0):
         """
-        Sample from the prob distribution
+        Sample from the prob distribution, note that because this is passed a probability distribution 
+        with a *restricted* domain, we may get passed a prob_dist that looks like [0, 0, 0, ..., 0]. 
+        Thus we provide a default_value for this case
 
         Args:
             prob_dist: (np.array) a probability distribution over actions (assumes 1D)
@@ -205,6 +207,8 @@ class N(object):
             action: the action/index into prob_dist, sampled according to prob_dist
         """
         total = np.sum(prob_dist)
+        if total = 0.0:   
+            return default_value
         key = random.uniform(0, total)
         running_total = 0.0
         for idx in range(prob_dist.shape[0]):
