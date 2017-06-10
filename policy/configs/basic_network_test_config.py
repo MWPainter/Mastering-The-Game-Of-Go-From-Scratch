@@ -1,3 +1,4 @@
+# Config for a *basic* network
 class bntconfig():
     # env config
     render_train     = False
@@ -17,7 +18,11 @@ class bntconfig():
     checkpoint_freq   = 200
     gamma             = 0.99            # still want to discount, because prefer to win quick...
     log_freq          = 50
-    eval_freq         = 5000
+    eval_freq         = 500
+
+    # Network parameters
+    num_layers = 5
+    num_filters = 32
 
     # output config
     model_name              = str(board_size)+'x'+str(board_size)+'.v'+str(version)

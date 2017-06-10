@@ -90,7 +90,9 @@ class BasicNetwork(N):
         state = tf.transpose(state, [0,2,3,1]) # go inputs have channels first, need to transpose
 
         # Build a base cnn with 5 layers, and 32 filters
-        board_rep = self._build_pure_convolution(inpt=state, num_layers=5, num_filters=32, scope=scope)
+        num_layers = self.config.num_layers
+        num_filters = self.config.num_filters
+        board_rep = self._build_pure_convolution(inpt=state, num_layers=num_layers, num_filters=num_filters, scope=scope)
                
         # Build the output layers (1x1 convolution + softmax)
         output, logits = self._add_output_layers(inpt=board_rep, scope=scope)
