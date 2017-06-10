@@ -580,8 +580,9 @@ class N(object):
                 max_p_values.append(max(action_dist))
                 p_values += list(action_dist)
 
-                # perform action in env
+                # perform action in env, and remember if the player just managed to loose the game
                 new_state, _, done, _ = self.env.step(action)
+                training_agent_lost_game = done
 
                 # Render?
                 if self.config.render_train: 
@@ -648,6 +649,12 @@ class N(object):
                     backpropogated_rewards = np.array([reward] * len(states))
                     discounts = np.array(list(reversed([self.config.gamma ** i for i in range(len(states))])))
                     discounted_values = backpropogated_rewards * discounts
+
+                    # If the training agent lost the game, we want to make sure that their 
+                    # LOOSING move has a negative value...
+                    if training_agent_lost_game and discounted_values[-1] > 0:
+                        discounted_values[-1] *= -1.0
+                    
                                                          
                     # Put stuff in the replay buffer
                     replay_buffer.store_example_batch(states, actions, discounted_values)
