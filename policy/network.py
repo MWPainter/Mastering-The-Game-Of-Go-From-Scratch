@@ -45,7 +45,6 @@ class N(object):
         # Create the environments to use (and reset to populate them with info)
         self.board_size = board_size
         self.env = gym.make(self._self_play_env_name)
-        #self.env = gym.make(self._pachi_env_name)
         self.env.reset()
         self.pachi_env = gym.make(self._pachi_env_name)
         self.pachi_env.reset()
@@ -73,16 +72,12 @@ class N(object):
         # add placeholders
         self.add_placeholders_op()
 
-        # compute Q values of state
+        # compute output (policy) from state
         state = self.process_state(self.s)
-        self.outputs = self.get_output_op(state, scope=self.config.scope, reuse=False)
+        self.outputs, self.logits = self.get_output_op(state, scope=self.config.scope, reuse=False)
 
-        # compute Q values of next state
-        ###state_p = self.process_state(self.sp)
-        ###self.target_outputs = self.get_output_op(state_p, scope=self.config.target_scope, reuse=False)
-
-        # add update operator for target network
-        self.add_update_target_op(self.config.scope, self.config.target_scope)
+        # Initialize opponent out to the same network (this will be set later though to a frozen graph)
+        self.opponent_out = self.outputs
 
         # add square loss
         self.add_loss_op(self.outputs) ###, self.target_outputs)
@@ -306,6 +301,7 @@ class N(object):
     ### Saving models                       ###
     ###########################################
  
+
     def checkpoint(self, timestep):
         """
         Save a checkpoint of the current params
@@ -318,7 +314,32 @@ class N(object):
             os.makedirs(self.config.model_checkpoint_output)
         self.saver.save(self.sess, self.config.model_checkpoint_output + str(timestep))
         return self.config.model_checkpoint_output + str(timestep)
+
+
+    def generate_opponent(self, t):
+        """
+        Create an opponent out of the current graph and return it
+        This involves taking a checkpoint, 
+        Args:
+            t: the current time
+        """
+        checkpoint_f = self.checkpoint(t)
+        frozen_checkpoint = self.config.opponent_dir + 'opponent' + str(t // 500)
+        self.freeze(checkpoint_f, frozen_checkpoint)
+        return self.get_opponent_out(frozen_checkpoint)
+
+
+    def get_opponent_out(self, opponent_f):
+        """
+        Given a frozen graph file path, create a tf op for it
     
+        Args:
+            opponent_f: file path of a frozen graph to create an opponent out of
+        """
+        raise NotImplementedError
+
+    
+
     def freeze(self, checkpoint_f, output_f):
         """
         Given the filename of a checkpoint, freezes it and saves the result in output_f.
@@ -330,11 +351,6 @@ class N(object):
         print("Running command:")
         print(command)
         subprocess.call(command, shell=True)
-
-
-    def update_opponent(self,opponent_f):
-        raise NotImplementedError
-        
 
 
     def save(self):
@@ -433,14 +449,6 @@ class N(object):
     ### Network interaction                 ###
     ###########################################
 
-    @property
-    def policy(self, state):
-        """
-        Returns a probability distribution function, taking states and returning probabilities over actions
-        """
-        return lambda state: self.get_action_distribution(state)
-
-
     def get_action_distribution(self, state):
         """
         Returns a distribution over actions 
@@ -486,6 +494,7 @@ class N(object):
         best_action_idx = np.argmax(action_values[valid_actions])      # get index into valid_actions of the best action to take
         return valid_actions[best_action_idx], action_values, valid_actions
 
+
     def get_opponent_best_valid_action(self, state):
         """
         Return best action (its the same regardless of if the function learned is p or Q)
@@ -528,15 +537,14 @@ class N(object):
 
         # initialize replay buffer and variables
         replay_buffer = ReplayBuffer(self.config.buffer_size, self.board_size)
-        # Don't think we need this TODO
         rewards = deque(maxlen=self.config.num_episodes_test)
         max_p_values = deque(maxlen=1000)
         p_values = deque(maxlen=1000)
         self.init_averages()
-
-        t = last_eval = last_record = 0 # time control of nb of steps
-        scores_eval = [] # list of scores computed at iteration time
-        scores_eval += [self.evaluate(t)[0]]
+        t = last_eval = last_record = 0                                         # time control of nb of steps
+        episode = last_checkpoint = 0
+        scores_eval = [self.evaluate(t)[0]]                                     # list of scores computed at iteration time
+        opponents = []                                                          # opponents used to play against in training
         
         prog = Progbar(target=self.config.nsteps_train)
 
@@ -544,56 +552,41 @@ class N(object):
         train_game_length_f = open("train_game_lengths.txt", 'w', buffering=1)
         eval_game_length_f = open("eval_game_lengths.txt", 'w', buffering=1)
 
-        opponents = []
-
-        # interact with environment
+        # per episode training loop
         while t < self.config.nsteps_train:
-            total_reward = 0
+            # variables for this episode
             state = self.env.reset()
             states = []
             actions = []         
-            episode_rewards = [] # don't think we need this TODO
-            next_states = []     # don't think we need this TODO
-            done_mask = []
-            training_agent_is_black = True
-            # this is where we save opponents
-            if t == 0 or (t - last_opponent_update) >  self.config.checkpoint_freq: 
-              checkpoint_f = self.checkpoint(t)
-              frozen_checkpoint = self.config.opponent_dir + 'opponent' + str(t // 500)
-              # after saving, need to freeze graph so can load later
-              self.freeze(checkpoint_f, frozen_checkpoint)
-              opponents.append(self.get_opponent_out(frozen_checkpoint))
-              last_opponent_update = t
-            # randomly sample an opponent 
+            training_agent_is_black = random.choice([True, False]) # if the agent being trained is playing as black or not (playing first)
+            episode += 1
+            last_checkpoint += 1
+
+            # Add opponent to pool if it's time to
+            if t == 0 or last_checkpoint >  self.config.checkpoint_freq: 
+                opponents += [self.generate_opponent(t)]
+                last_checkpoint = 0
+
+            # randomly sample an opponent for this episode
             self.opponent_out = random.sample(opponents, 1)[0]
-            # determine player color. If white, let opponent move first.
-            if random.choice([True, False]):
-              # Agent being trained is playing as white
-              training_agent_is_black = False
 
-              # Who's turn is it?
-              player = self.env.state.color
-
-              # chose action according to current state and exploration
-              player_perspective_board = self._board_from_player_perspective(state,player)
-              best_action, action_dist, valid_actions = self.get_best_valid_action(player_perspective_board)
-              # perform action in env
-              state, reward, done, info = self.env.step(best_action)
-              # this should never result in a finished game, or any reward, so I will omit any 
-              # processing here 
+            # If our agent should play as white, let the oponent make a move!
+            # We know that the game won't end in one move, so don't worry about that!
+            if not training_agent_is_black:
+                # Let the opponent make a move
+                player = self.env.state.color
+                player_perspective_board = self._board_from_player_perspective(state,player)
+                best_action, _, _ = self.get_best_valid_action(player_perspective_board)
+                state, _, _, _ = self.env.step(best_action)
               
-
-
-            # instead of building this up at every step, think it's easier to construct at end
-            # values_guess = []
+            # per action training loop
             while True:
+                # increment counters
                 t += 1
                 last_eval += 1
                 last_record += 1
-
-
-
                 
+                # render?
                 if self.config.render_train: 
                   print("Board before agent moves:")
                   self.env.render()
@@ -602,58 +595,52 @@ class N(object):
                 player = self.env.state.color
 
                 # chose action according to current state and exploration
-                player_perspective_board = self._board_from_player_perspective(state,player)
-                best_action, action_dist, valid_actions = self.sample_valid_action(player_perspective_board)
-                action                                  = exp_schedule.get_action(best_action, valid_actions)
+                player_perspective_board           = self._board_from_player_perspective(state,player)
+                action, action_dist, valid_actions = self.sample_valid_action(player_perspective_board)
+                action                             = exp_schedule.get_action(action, valid_actions)
 
-                # store q values
+                # store p values
                 max_p_values.append(max(action_dist))
                 p_values += list(action_dist)
 
                 # perform action in env
-                new_state, reward, done, info = self.env.step(action)
+                new_state, _, done, _ = self.env.step(action)
+
+                # Render?
                 if self.config.render_train: 
                   print("Board after agent moves:")
                   self.env.render()
 
-                # Store the s, a, new_s, for later use in replay buffer
-                # Guessing the rewards, to be corrected when the game finishes
+                # Store the s, a, for later use in replay buffer
                 states.append(self._board_from_player_perspective(state, player))
                 actions.append(action)
-                # THIS IN PARTICULAR needs to be updated if we are actually using it
-                # because now it is giving the opponent's state, not the agents. TODO
-                next_states.append(self._board_from_player_perspective(new_state, player))
-                if done: 
-                  done_mask.append(1.0)
-                  game_length = len(states)
-                  train_game_length_f.write(str(game_length) + '\n')
-                else: 
-                  #if t % 2 == 0: values_guess.append(1.0)
-                  #else: values_guess.append(-1.0)
-                  #values_guess.append(1.0)
 
-                  # Now, let the opponent move
-                  # Who's turn is it?
-                  player = self.env.state.color
-                  # chose action according to current state and exploration
-                  player_perspective_board = self._board_from_player_perspective(new_state,player)
-                  best_action, action_dist, valid_actions = self.get_opponent_best_valid_action(player_perspective_board)
-                  new_state, reward, done, info = self.env.step(best_action)
-                  if done:
-                    # adjust reward to be for player, not opponent
-                    done_mask.append(1.0)
-                    game_length = len(states)
-                    train_game_length_f.write(str(game_length) + '\n')
-                    reward *= -1
-                  else:
-                    done_mask.append(0.0)
+                # if the game hasn't ended, let the opponent move
+                if not done:
+                    player = self.env.state.color
+                    player_perspective_board = self._board_from_player_perspective(new_state,player)
+                    best_action, _, _ = self.get_opponent_best_valid_action(player_perspective_board)
+                    new_state, _, done, _ = self.env.step(best_action)
 
-                  # store the transition
-                  state = new_state
+                # now if we're done, keep track of some data (compute reward + write game length to file)
+                # manually compute who (should have) won using the game state 
+
+                # Manually compute the reward, it's non-zero only if the games finished
+                # the open AI env's reward is unreliable because of invalid moves (the person winning 'resigns')
+                # we just take the sign of the 'official score', which is positive iff white is winning
+                # and adjust it to whoever 'we' are playing as
+                reward = 0.0
+                if done:
+                    reward = np.sign(self.env.state.board.official_score)
+                    if training_agent_is_black: reward *= -1.0
+                    
+                # store the transition
+                state = new_state
 
                 # now that we know the true reward (after opponent taking action) we can update it
                 rewards.append(reward)
                 episode_rewards.append(reward)
+
                 # perform a training step
                 loss_eval, grad_eval = self.train_step(t, replay_buffer, lr_schedule.epsilon)
 
@@ -675,33 +662,25 @@ class N(object):
                                                         self.config.learning_start))
                     sys.stdout.flush()
 
-                # count reward
-                total_reward += reward
+                # If finished, print stuff out, and add to replay buffer
                 if done:
-                    # Update replay buffer, first making sure the values (we guessed) are correct
-                    # multiplying by (values[-1] * reward) is correct. If reward == 0 it zeros the array
-                    # if values[-1] == reward, then it's 1, if values[-1] != reward, then it's -1
+                    # Logging (for some graphs)
+                    game_length = len(states)
+                    train_game_length_f.write(str(game_length) + '\n')
+
+                    # Compute the values (discounted sum of rewards) for this game
                     backpropogated_rewards = np.array([reward] * len(states))
                     discounts = np.array(list(reversed([self.config.gamma ** i for i in range(len(states))])))
                     discounted_values = backpropogated_rewards * discounts
-                    if (training_agent_is_black and ((self.env.state.board.official_score > 0 and \
-                                                      reward > 0) or \
-                                                     (self.env.state.board.official_score < 0 and \
-                                                      reward < 0))) or \
-                       (not training_agent_is_black and ((self.env.state.board.official_score > 0 and \
-                                                         reward < 0) or \
-                                                         (self.env.state.board.official_score < 0 and \
-                                                         reward > 0))):
-                        print("Waaaaaaah")
                                                          
-                    #print(discounted_values)
-                    # TODO fix args to this, don't need many of them
-                    # hack so I don't have to mess with replay_buffer implementation
-                    replay_buffer.store_example_batch(states, actions, episode_rewards, next_states, done_mask, discounted_values)
+                    # Put stuff in the replay buffer
+                    replay_buffer.store_example_batch(states, actions, discounted_values)
+
+                    # Break from the step training loop
                     break
 
+            # If it's time to eval, then evaluate
             if (t > self.config.learning_start) and (last_eval > self.config.eval_freq):
-                # evaluate our policy
                 last_eval = 0
                 print("")
                 eval_avg_reward, eval_avg_length = self.evaluate(t)
@@ -735,7 +714,8 @@ class N(object):
         if t % self.config.target_update_freq == 0:
             self.update_target_params()
             
-        # occasionaly save the weights
+        # Used to checkpoint here and 'occasionally save the weights'
+        # But we had to move this to the main training loop (because of the opponent pool)
         #if (t % self.config.checkpoint_freq == 0):
         #    self.checkpoint(t)
 
@@ -754,7 +734,6 @@ class N(object):
             loss: (Q - Q_target)^2
         """
 
-        ###s_batch, a_batch, r_batch, sp_batch, done_mask_batch, _ = replay_buffer.sample(self.config.batch_size)
         s_batch, a_batch, _, _, _, v_batch = replay_buffer.sample(self.config.batch_size)
 
 
@@ -762,9 +741,6 @@ class N(object):
             # inputs
             self.s: s_batch,
             self.a: a_batch,
-            ###self.r: r_batch,
-            ###self.sp: sp_batch, 
-            ###self.done_mask: done_mask_batch,
             self.v: v_batch,
             self.lr: lr, 
             # extra info
@@ -785,14 +761,6 @@ class N(object):
         self.file_writer.add_summary(summary, t)
         
         return loss_eval, grad_norm_eval
-
-
-    def save_opponent(self, some_scope_thing):
-        """
-        Save the current params to be able to be used as an opponent later
-        """
-        # TODO
-        raise NotImplementedError
 
 
     def evaluate(self, t, env=None, num_episodes=None):
@@ -822,7 +790,6 @@ class N(object):
         rewards = []
         game_lengths = []
         for i in range(num_episodes):
-            # Don't think we need this TODO
             total_reward = 0
             state = env.reset()
             game_length = 0
@@ -880,10 +847,6 @@ class N(object):
         # model
         self.train(exp_schedule, lr_schedule)
 
-        # record one game at the end
-        if self.config.record:
-            self.record()
-
 
 
 
@@ -895,7 +858,6 @@ class VN(N):
     """
     Class encapsulating a network that will learn a value function
     These networks are learned using supervised learning/regression, given data from self play with a 
-    Q network or a policy network
     """
     def __init__(self, env, config, logger=None):
         # Give it a copy of PART of a netowork in constructor

@@ -3,11 +3,9 @@ class bntconfig():
     render_train     = False
     render_test      = True
     overwrite_render = True
-    record           = False
 
     # scoping
     scope        = "default"            # variable scope for network
-    target_scope = "default_target"    	# variable scope for target network 
 
     # model and training config
     version           = 6               # useage internal to config
@@ -20,7 +18,6 @@ class bntconfig():
     gamma             = 0.99            # still want to discount, because prefer to win quick...
     log_freq          = 50
     eval_freq         = 5000
-    soft_epsilon      = 0
 
     # output config
     model_name              = str(board_size)+'x'+str(board_size)+'.v'+str(version)
