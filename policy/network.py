@@ -36,9 +36,11 @@ class N(object):
             scope: the scope under which the variables will be 
             logger: logger instance from logging module
         """
-        # directory for training outputs
+        # directories for training outputs, and opponent save files
         if not os.path.exists(config.output_path):
             os.makedirs(config.output_path)
+        if not os.path.exists(config.opponent_dir):
+            os.makedirs(config.opponent_dir)
 
         # Create the environments to use (and reset to populate them with info)
         self.board_size = board_size
@@ -454,7 +456,7 @@ class N(object):
             valid_actions: (array) of indices that are valid
         """
         valid_actions = self._get_valid_action_indices(state)
-        action_values = self.sess.run(self.opponent_outputs, feed_dict={self.s: [state]})[0]
+        action_values = self.sess.run(self.opponent_out, feed_dict={self.s: [state]})[0]
         best_action_idx = np.argmax(action_values[valid_actions])      # get index into valid_actions of the best action to take
         return valid_actions[best_action_idx], action_values, valid_actions
     
@@ -484,6 +486,7 @@ class N(object):
 
         # initialize replay buffer and variables
         replay_buffer = ReplayBuffer(self.config.buffer_size, self.board_shape, self.action_shape, self.reward_shape)
+        # Don't think we need this TODO
         rewards = deque(maxlen=self.config.num_episodes_test)
         max_p_values = deque(maxlen=1000)
         p_values = deque(maxlen=1000)
@@ -499,31 +502,49 @@ class N(object):
         train_game_length_f = open("train_game_lengths.txt", 'w', buffering=1)
         eval_game_length_f = open("eval_game_lengths.txt", 'w', buffering=1)
 
+        opponents = []
+
         # interact with environment
         while t < self.config.nsteps_train:
             total_reward = 0
             state = self.env.reset()
             states = []
-            actions = []
-            episode_rewards = []
-            next_states = []
+            actions = []         
+            episode_rewards = [] # don't think we need this TODO
+            next_states = []     # don't think we need this TODO
             done_mask = []
-            values_guess = []
-            opponents = []
+            # this is where we save and load past opponents
+            if t == 0 or (t - last_opponent_update) >  self.config.checkpoint_freq: 
+              checkpoint_f = self.checkpoint(t)
+              frozen_checkpoint = self.config.opponent_dir + 'opponent' + str(t / 500)
+              # after saving, need to freeze graph so can load later
+              self.freeze(checkpoint_f, frozen_checkpoint)
+              opponents.append(frozen_checkpoint)
+              opponent_file = random.sample(opponents, 1)[0]
+              self.update_opponent(opponent_file)
+              last_opponent_update = t
+            # determine player color. If white, let opponent move first.
+            if random.choice([True, False]):
+              # Who's turn is it?
+              player = self.env.state.color
+
+              # chose action according to current state and exploration
+              player_perspective_board = self._board_from_player_perspective(state,player)
+              best_action, action_dist, valid_actions = self.get_best_valid_action(player_perspective_board)
+              # perform action in env
+              state, reward, done, info = self.env.step(best_action)
+              # this should never result in a finished game, or any reward, so I will omit any 
+              # processing here 
+              
+
+
+            # instead of building this up at every step, think it's easier to construct at end
+            # values_guess = []
             while True:
                 t += 1
                 last_eval += 1
                 last_record += 1
 
-                # this is where we save and load past opponents
-                if t % self.config.checkpoint_freq == 0:
-                  checkpoint_f = self.checkpoint(t)
-                  frozen_checkpoint = self.config.opponent_dir + 'opponent' + str(t / 500)
-                  # after saving, need to freeze graph so can load later
-                  self.freeze(checkpoint_f, frozen_checkpoint)
-                  opponents.append(frozen_checkpoint)
-                  opponent_file = random.sample(opponents, 1)[0]
-                  self.update_opponent(opponent_file)
 
 
                 if self.config.render_train: self.env.render()
@@ -547,20 +568,40 @@ class N(object):
                 # Guessing the rewards, to be corrected when the game finishes
                 states.append(self._board_from_player_perspective(state, player))
                 actions.append(action)
-                rewards.append(reward)
-                episode_rewards.append(reward)
+                # THIS IN PARTICULAR needs to be updated if we are actually using it
+                # because now it is giving the opponent's state, not the agents. TODO
                 next_states.append(self._board_from_player_perspective(new_state, player))
                 if done: 
                   done_mask.append(1.0)
                   game_length = len(states)
                   train_game_length_f.write(str(game_length) + '\n')
-                else: done_mask.append(0.0)
-                if t % 2 == 0: values_guess.append(1.0)
-                else: values_guess.append(-1.0)
+                else: 
+                  #if t % 2 == 0: values_guess.append(1.0)
+                  #else: values_guess.append(-1.0)
+                  #values_guess.append(1.0)
 
-                # store the transition
-                state = new_state
+                  # Now, let the opponent move
+                  # Who's turn is it?
+                  player = self.env.state.color
+                  # chose action according to current state and exploration
+                  player_perspective_board = self._board_from_player_perspective(new_state,player)
+                  best_action, action_dist, valid_actions = self.get_opponent_best_valid_action(player_perspective_board)
+                  new_state, reward, done, info = self.env.step(best_action)
+                  if done:
+                    # adjust reward to be for player, not opponent
+                    done_mask.append(1.0)
+                    game_length = len(states)
+                    train_game_length_f.write(str(game_length) + '\n')
+                    reward *= -1
+                  else:
+                    done_mask.append(0.0)
 
+                  # store the transition
+                  state = new_state
+
+                # now that we know the true reward (after opponent taking action) we can update it
+                rewards.append(reward)
+                episode_rewards.append(reward)
                 # perform a training step
                 loss_eval, grad_eval = self.train_step(t, replay_buffer, lr_schedule.epsilon)
 
@@ -588,9 +629,12 @@ class N(object):
                     # Update replay buffer, first making sure the values (we guessed) are correct
                     # multiplying by (values[-1] * reward) is correct. If reward == 0 it zeros the array
                     # if values[-1] == reward, then it's 1, if values[-1] != reward, then it's -1
-                    values = np.array(values_guess) * values_guess[-1] * reward
-                    discounts = np.array([self.config.gamma ** i for i in range(values.shape[0])])
-                    discounted_values = values * discounts
+                    backpropogated_rewards = np.array([reward] * len(states))
+                    # TODO this discounts the later states more than earlier states, it's backwards isn't it?
+                    discounts = np.array([self.config.gamma ** i for i in range(len(states))])
+                    discounted_values = backpropogated_rewards * discounts
+                    # TODO fix args to this, don't need many of them
+                    # hack so I don't have to mess with replay_buffer implementation
                     replay_buffer.store_example_batch(states, actions, episode_rewards, next_states, done_mask, discounted_values)
                     break
 
@@ -716,6 +760,7 @@ class N(object):
         rewards = []
         game_lengths = []
         for i in range(num_episodes):
+            # Don't think we need this TODO
             total_reward = 0
             state = env.reset()
             game_length = 0
@@ -729,13 +774,13 @@ class N(object):
                 state = new_state
 
                 # Count rewards
-                total_reward += reward
+                #total_reward += reward
                 if done:
                     game_lengths += [game_length]
                     break
 
             # updates to perform at the end of an episode
-            rewards.append(total_reward)     
+            # rewards.append(total_reward)     
 
         avg_reward = np.mean(rewards)
         sigma_reward = np.sqrt(np.var(rewards) / len(rewards))

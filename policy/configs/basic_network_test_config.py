@@ -13,13 +13,13 @@ class bntconfig():
     version           = 1               # useage internal to config
     prev_version      = 0
     board_size        = 5
-    num_episodes_test = 10
+    num_episodes_test = 2
     grad_clip         = True
     clip_val          = 10
     checkpoint_freq   = 500
     gamma             = 0.99            # still want to discount, because prefer to win quick...
     log_freq          = 50
-    eval_freq         = 2500
+    eval_freq         = 2000
     soft_epsilon      = 0
 
     # output config
