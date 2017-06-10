@@ -554,7 +554,7 @@ class N(object):
             # this is where we save and load past opponents
             if t == 0 or (t - last_opponent_update) >  self.config.checkpoint_freq: 
               checkpoint_f = self.checkpoint(t)
-              frozen_checkpoint = self.config.opponent_dir + 'opponent' + str(t / 500)
+              frozen_checkpoint = self.config.opponent_dir + 'opponent' + str(t // 500)
               # after saving, need to freeze graph so can load later
               self.freeze(checkpoint_f, frozen_checkpoint)
               opponents.append(frozen_checkpoint)
@@ -812,13 +812,13 @@ class N(object):
                 state = new_state
 
                 # Count rewards
-                #total_reward += reward
+                total_reward += reward
                 if done:
                     game_lengths += [game_length]
                     break
 
             # updates to perform at the end of an episode
-            # rewards.append(total_reward)     
+            rewards.append(total_reward)     
 
         avg_reward = np.mean(rewards)
         sigma_reward = np.sqrt(np.var(rewards) / len(rewards))
