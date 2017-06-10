@@ -207,7 +207,7 @@ class N(object):
             action: the action/index into prob_dist, sampled according to prob_dist
         """
         total = np.sum(prob_dist)
-        if total = 0.0:   
+        if total == 0.0:   
             return default_value
         key = random.uniform(0, total)
         running_total = 0.0
