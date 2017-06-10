@@ -806,7 +806,7 @@ class N(object):
                 if self.config.render_test: env.render()
 
                 # Play a step
-                action, _, _ = self.get_best_valid_action(state)
+                action, _, _ = self.sample_valid_action(state)
                 game_length += 1
                 new_state, reward, done, info = env.step(action)
                 state = new_state

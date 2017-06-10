@@ -13,7 +13,7 @@ class bntconfig():
     version           = 1               # useage internal to config
     prev_version      = 0
     board_size        = 5
-    num_episodes_test = 2
+    num_episodes_test = 20
     grad_clip         = True
     clip_val          = 1
     checkpoint_freq   = 500
