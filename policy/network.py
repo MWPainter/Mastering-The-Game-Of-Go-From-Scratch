@@ -483,7 +483,7 @@ class N(object):
         """
 
         # initialize replay buffer and variables
-        replay_buffer = ReplayBuffer(self.config.buffer_size, self.board_shape, self.action_shape, self.reward_shape)
+        replay_buffer = ReplayBuffer(self.config.buffer_size, self.board_size)
         rewards = deque(maxlen=self.config.num_episodes_test)
         max_p_values = deque(maxlen=1000)
         p_values = deque(maxlen=1000)
