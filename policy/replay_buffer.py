@@ -18,23 +18,29 @@ class ReplayBufferError(Exception):
 class ReplayBuffer(object):
     """
     Replay buffer used to sample mini batches of SARS examples for 
+    N.B. The original version of this used to be a general replay buffer.
+    N.B.B. To return to original state, remove "exploit symmetry" functions, 
+           and allow shapes to be set by args in constructor
+           and remove the need to add values probably (likely wouldn't know this in a general setting)
     """
-    def __init__(self, size, s_shape, a_shape, r_shape):
+    def __init__(self, size, board_size):
         """
         Args:
             size: the size of the replay buffer
             s_shape: shape of states to be used
             a_Shape: shape of actions to be used
             r_shape: shape of rewards to be used
+            board_size: the size of the board that we're a replay buffer for
         """
         self._size = size
         self._contains = 0
-        self._s_shape = s_shape
-        self._s_size = prod(s_shape)
-        self._a_shape = a_shape
-        self._a_size = prod(a_shape)
-        self._r_shape = r_shape
-        self._r_size = prod(r_shape)
+        self._board_size = board_size
+        self._s_shape = (3, board_size, board_size)
+        self._s_size = prod(self._s_shape)
+        self._a_shape = ()
+        self._a_size = prod(self._a_shape)
+        self._r_shape = ()
+        self._r_size = prod(self._r_shape)
         self._d_shape = () # done mask only has 0/1 values
         self._d_size = 1
         self._v_shape = () # values are floats
@@ -106,6 +112,211 @@ class ReplayBuffer(object):
         return sarses
 
 
+    def _action_to_coord(self, action):
+        """
+        Helper to convert an action to board position
+        
+        Args:
+            action: np.ndarray of actions, shape of (n,)
+        Returns:
+            coords: np.ndarray of coords, shape of (n,2)
+        """
+        n = action.shape[0]
+        coords = np.zeros((n,2))
+        coords[:,0] = np.mod(action, self._board_size)           # x's
+        coords[:,1] = np.floor_divide(action, self._board_size)  # y's
+        return coords
+
+
+    def _coord_to_action(self, coord):
+        """
+        Helper to convert a board position to an action number
+
+        Args:
+            coords: np.ndarray of coords, shape of (n,2)
+        Returns:
+            action: np.ndarray of actions, shape of (n,)
+        """
+        return (coord[:,1] * self._board_size + coord[:,0]).flatten()
+
+
+    def _reflect_coord(self, coords):
+        """
+        Returns reflected coords 
+
+        Args:
+            coords: np.ndarray of coords, shape of (n,2)
+        Returns:
+            coords: reflected coords
+        """
+        coords[:,0] = self._board_size - 1 - coords[:,0]
+        return coords
+
+    
+    def _rotate_coord(self, coord, rot):
+        """
+        Returns a rotated coord. We rotate 'rot' many times 90 degrees clockwise, and assume origin is in top left
+        The grid is of coords from 0, ..., _board_size - 1
+        So the transform we want is
+        (x,y) -> (board_size - 1 - y, x)
+
+        Args:
+            coords: np.ndarray of coords, shape of (n,2)
+        Returns:
+            coords: rotated coords
+        """
+        for _ in range(rot):
+            next_coord = np.copy(coord)
+            next_coord[:,0] = self._board_size - 1 - coord[:,1]
+            next_coord[:,1] = coord[:,0]
+            coord = next_coord
+        return coord
+
+
+    def _reflect_state(self, state):
+        """
+        Retrurns reflected states, (reverse in the last dimension)
+        Note that if a = [0,1,2,3,4,5]
+        then a[::2] prints out every 2nd element
+        so a[::2] == [0,2,4]
+           a[1::2] == [1,3,5]
+
+        Args:
+            s_arr: np.ndarray of initial state of the sars samples
+                    shape = (n, 3, s, s)
+        Returns:
+            s_arr: reflected states
+                    shape = (n, 3, s, s)
+        """
+        return state[:,:,:,::-1]
+        
+    
+    def _apply_transform(self, reflect, rot, s_arr, a_arr, sp_arr):
+        """
+        Apply a transform of reflection/rotation
+
+        Args:
+            reflect: bool, if should reflect the board
+            rot: the number of 90 degree rotations to make
+            s_arr: np.ndarray of initial state of the sars samples
+                    shape = (n, 3, s, s)
+            a_arr: np.ndarray of actions of the samples
+                    shape = (n,)
+            sp_arr: np.ndarray of next state of the sars samples
+                    shape = (n, 3, s, s)
+        Returns:
+            s_arr: np.ndarray of transformed states
+            a_arr: np.ndarray of transformed actions
+            sp_arr: np.ndarray of transformaed successor states
+        """
+        # Copys, so don't clobber old version
+        s_arr_trans = np.copy(s_arr)
+        a_arr_trans = np.copy(a_arr)
+        sp_arr_trans = np.copy(sp_arr)
+
+        # Convert to coord, so can do the math for actions
+        coords = self._action_to_coord(a_arr_trans)
+
+        # Apply reflections
+        if reflect:
+            s_arr_trans = self._reflect_state(s_arr_trans)
+            coords = self._reflect_coord(coords)
+            sp_arr_trans = self._reflect_state(sp_arr_trans)
+
+        # Apply rotations
+        s_arr_trans = np.rot90(s_arr_trans, rot, (3,2))
+        coords = self._rotate_coord(coords, rot)
+        sp_arr_trans = np.rot90(sp_arr_trans, rot, (3,2))
+
+        # Conver back to actions from coords
+        a_arr_trans = self._coord_to_action(coords)
+
+        return s_arr_trans, a_arr_trans, sp_arr_trans
+
+
+    def _exploit_symmetries(self, s_arr, a_arr, r_arr, sp_arr, d_arr, v_arr):
+        """
+        Takes a list of examples, an replicates them using rotational and reflectional symmetries
+        them to provide more training examples
+
+        Note that states and actions need to reflect the rotations/reflections. Rewards, the done mask 
+        and value are invarient to the orientation of the board
+
+        Args:
+            s_arr: np.ndarray of initial state of the sars samples
+                    shape = (n, 3, s, s)
+            a_arr: np.ndarray of actions of the samples
+                    shape = (n,)
+            r_arr: np.ndarray of reward of the samples
+                    shape = (n,)
+            sp_arr: np.ndarray of next state of the sars samples
+                    shape = (n, 3, s, s)
+            done_mask: np.ndarray for done mask. 1.0 if the sars example is a terminal one
+                    shape = (n,)
+            v_arr: np.ndarry of values for the state (we know the actual value of a game after its done)
+                    shape = (n,)
+        Returns:
+            s_arr: np.ndarray of initial state of the sars samples
+                    shape = (8n, 3, s, s)
+            a_arr: np.ndarray of actions of the samples
+                    shape = (8n,)
+            r_arr: np.ndarray of reward of the samples
+                    shape = (8n,)
+            sp_arr: np.ndarray of next state of the sars samples
+                    shape = (8n, 3, s, s)
+            done_mask: np.ndarray for done mask. 1.0 if the sars example is a terminal one
+                    shape = (8n,)
+            v_arr: np.ndarry of values for the state (we know the actual value of a game after its done)
+                    shape = (8n,)
+        """
+        old_arr_len = s_arr.shape[0]
+        arr_len = 8 * old_arr_len
+
+        new_s_arr = np.zeros((arr_len,) + self._s_shape)
+        new_a_arr = np.zeros((arr_len,))
+        new_r_arr = np.zeros((arr_len,))
+        new_sp_arr = np.zeros((arr_len,) + self._s_shape)
+        new_d_arr = np.zeros((arr_len,))
+        new_v_arr = np.zeros((arr_len,))
+
+        for i in range(8):
+            beg = old_arr_len * i
+            end = old_arr_len * (i+1)
+            reflect = ((i // 4) == 1)
+            rot = i % 4
+            s,a,sp = self._apply_transform(reflect, rot, s_arr, a_arr, sp_arr)
+
+            new_s_arr[beg:end] = s
+            new_a_arr[beg:end] = a
+            new_r_arr[beg:end] = r_arr
+            new_sp_arr[beg:end] = sp
+            new_d_arr[beg:end] = d_arr
+            new_v_arr[beg:end] = v_arr
+
+        # Interlace the transforms, because we don't want to bias one orientation over another
+        # (E.g. if buffer were of size 40, and we added 8 examples, the 8th orientation would never get put in the buffer)
+        reord_new_s_arr = np.zeros((arr_len,) + self._s_shape)
+        reord_new_a_arr = np.zeros((arr_len,))
+        reord_new_r_arr = np.zeros((arr_len,))
+        reord_new_sp_arr = np.zeros((arr_len,) + self._s_shape)
+        reord_new_d_arr = np.zeros((arr_len,))
+        reord_new_v_arr = np.zeros((arr_len,))
+
+        for i in range(old_arr_len):
+            beg = 8 * i
+            end = 8 * (i+1)
+            reord_new_s_arr[beg:end] = new_s_arr[i::old_arr_len]
+            reord_new_a_arr[beg:end] = new_a_arr[i::old_arr_len]
+            reord_new_r_arr[beg:end] = new_r_arr[i::old_arr_len]
+            reord_new_sp_arr[beg:end] = new_sp_arr[i::old_arr_len]
+            reord_new_d_arr[beg:end] = new_d_arr[i::old_arr_len]
+            reord_new_v_arr[beg:end] = new_v_arr[i::old_arr_len]
+
+        return reord_new_s_arr, reord_new_a_arr, \
+               reord_new_r_arr, reord_new_sp_arr, \
+               reord_new_d_arr, reord_new_v_arr
+
+
     def _decode_sarses(self, sarses):
         """
         Inverse of the _encode_sars function
@@ -173,15 +384,19 @@ class ReplayBuffer(object):
             v_arr: np.ndarry of values for the state (we know the actual value of a game after its done)
         """
         s_arr = np.array(s_arr)
-        a_arr = np.array(a_arr)
-        r_arr = np.array(r_arr)
+        a_arr = np.array(a_arr).flatten() # flatten to not have to deal with (n,) vs (n,1) shapes
+        r_arr = np.array(r_arr).flatten()
         sp_arr = np.array(sp_arr)
-        done_mask = np.array(done_mask)
-        v_arr = np.array(v_arr)
+        done_mask = np.array(done_mask).flatten()
+        v_arr = np.array(v_arr).flatten()
+
+        s_arr,a_arr,r_arr,sp_arr,done_mask,v_arr = self._exploit_symmetries(s_arr,a_arr,r_arr,sp_arr,done_mask,v_arr)
         sarses = self._encode_sarses(s_arr, a_arr, r_arr, sp_arr, done_mask, v_arr)
+
         sarses_len = sarses.shape[0]
         if not self.should_sample: 
             self._contains += sarses_len
+
         self._pop(sarses_len)
         self._push(sarses)
 
@@ -208,7 +423,7 @@ Include a main function for some testing
 Manually check that the values make sense
 """
 if __name__ == "__main__":
-    rb = ReplayBuffer(3, (2,2), (1,), (1,))
+    rb = ReplayBuffer(3*8, 2)
     ss = []
     aa = []
     rr = []
@@ -216,10 +431,20 @@ if __name__ == "__main__":
     dd = []
     vv = []
     for i in range(3):
-        s = np.array([[i,i],[i,i]])
+        s = np.array([[[i,i],
+                       [i,i]],
+                      [[i,i],
+                       [i,i]],
+                      [[i,i],
+                       [i,i]]])
         a = np.array([i])
         r = np.array([i])
-        sp = np.array([[i+1,i],[i,i+1]])
+        sp = np.array([[[i+1,i],
+                       [i,i+1]],
+                      [[i+1,i],
+                       [i,i+1]],
+                      [[i+1,i],
+                       [i,i+1]]])
         d = np.array([0.0] if i != 2 else [1.0])
         v = np.array([-1.0] if i != 1 else [1.0])
         ss.append(s)
@@ -236,19 +461,24 @@ if __name__ == "__main__":
     print("Sample 3:")
     print(rb.sample(3))
     print("\n")
-    rb.store_example(np.array([[3,3,],[3,3]]),
-                     np.array([3]),
-                     np.array([3]),
-                     np.array([[3,3],[3,4]]),
-                     [1.0],
-                     [0.0])
-    rb.store_example(np.array([[3,3,],[3,3]]),
-                     np.array([3]),
-                     np.array([3]),
-                     np.array([[3,3],[3,3]]),
-                     [1.0],
-                     [0.0])
-    print("Sample 3 (with 2 changed):")
+    for _ in range(3):
+        rb.store_example(np.array([[[0,1],
+                                    [1,0]],
+                                   [[1,0],
+                                    [0,0]],
+                                   [[0,0],
+                                    [0,1]]]),
+                         np.array([3]),
+                         np.array([3]),
+                         np.array([[[0,1],
+                                    [1,1]],
+                                   [[1,0],
+                                    [0,0]],
+                                   [[0,0],
+                                    [0,0]]]),
+                         [1.0],
+                         [0.0])
+    print("Sample 3 (with all changed to be same example):")
     print(rb.sample(3))
     print("\n"  )
     print("Intrnal queue (check is of length 3):")
