@@ -1,13 +1,6 @@
 import numpy as np
 import functools
 
-def prod(l):
-    """
-    Helper to multiply all of the elements in a tuple
-    """
-    return functools.reduce(lambda x,y: x*y, (1,) + l) 
-
-
 class ReplayBufferError(Exception):
     """
     Exception to throw if we incorrectly use the replay buffer!
@@ -27,26 +20,18 @@ class ReplayBuffer(object):
         """
         Args:
             size: the size of the replay buffer
-            s_shape: shape of states to be used
-            a_Shape: shape of actions to be used
-            r_shape: shape of rewards to be used
             board_size: the size of the board that we're a replay buffer for
         """
         self._size = size
         self._contains = 0
         self._board_size = board_size
         self._s_shape = (3, board_size, board_size)
-        self._s_size = prod(self._s_shape)
+        self._s_size = 3 * board_size * board_size
         self._a_shape = ()
-        self._a_size = prod(self._a_shape)
-        self._r_shape = ()
-        self._r_size = prod(self._r_shape)
-        self._d_shape = () # done mask only has 0/1 values
-        self._d_size = 1
-        self._v_shape = () # values are floats
+        self._a_size = 1
+        self._v_shape = ()
         self._v_size = 1
-        self._sars_size = self._s_size * 2 + self._a_size \
-                        + self._r_size + self._d_size + self._v_size
+        self._sars_size = self._s_size + self._a_size + self._v_size
         self._queue = np.zeros((self._size, self._sars_size))
 
 
@@ -79,36 +64,27 @@ class ReplayBuffer(object):
         self._queue[-sarses_len:] = sarses
         
 
-    def _encode_sarses(self, s, a, r, sp, d, v):
+    def _encode_sarses(self, s, a, v):
         """
         Encodes numpy ndarrays, s, a, r, sp, into a single sarses array of the same length
         Assumes s, a, r, sp are arrays of the same length
         Args:
             s: np.ndarray of states (sars examples)
             a: np.ndarray of actions (sars examples)
-            r: np.ndarray of rewards (sars examples)
-            sp: np.ndarray of states (sars examples)
-            d: np.ndarray for done mask (if sars example is terminal)
             v: np.ndarray for (empirical) value
         Return:
             sarses: np.ndarray of sars examples (flattened/encoded)
         """
         batch_size = s.shape[0]
         if batch_size != a.shape[0] or \
-           batch_size != r.shape[0] or \
-           batch_size != sp.shape[0] or \
-           batch_size != d.shape[0] or \
            batch_size != v.shape[0]:
             raise ReplayBufferError
 
         s = np.reshape(s, (batch_size, -1))
         a = np.reshape(a, (batch_size, -1))
-        r = np.reshape(r, (batch_size, -1))
-        sp = np.reshape(sp, (batch_size, -1))
-        d = np.reshape(d, (batch_size, -1))
         v = np.reshape(v, (batch_size, -1))
 
-        sarses = np.concatenate((s,a,r,d,v,sp), axis=-1)
+        sarses = np.concatenate((s,a,v), axis=-1)
         return sarses
 
 
@@ -191,7 +167,7 @@ class ReplayBuffer(object):
         return state[:,:,:,::-1]
         
     
-    def _apply_transform(self, reflect, rot, s_arr, a_arr, sp_arr):
+    def _apply_transform(self, reflect, rot, s_arr, a_arr):
         """
         Apply a transform of reflection/rotation
 
@@ -202,17 +178,13 @@ class ReplayBuffer(object):
                     shape = (n, 3, s, s)
             a_arr: np.ndarray of actions of the samples
                     shape = (n,)
-            sp_arr: np.ndarray of next state of the sars samples
-                    shape = (n, 3, s, s)
         Returns:
             s_arr: np.ndarray of transformed states
             a_arr: np.ndarray of transformed actions
-            sp_arr: np.ndarray of transformaed successor states
         """
         # Copys, so don't clobber old version
         s_arr_trans = np.copy(s_arr)
         a_arr_trans = np.copy(a_arr)
-        sp_arr_trans = np.copy(sp_arr)
 
         # Convert to coord, so can do the math for actions
         coords = self._action_to_coord(a_arr_trans)
@@ -221,20 +193,18 @@ class ReplayBuffer(object):
         if reflect:
             s_arr_trans = self._reflect_state(s_arr_trans)
             coords = self._reflect_coord(coords)
-            sp_arr_trans = self._reflect_state(sp_arr_trans)
 
         # Apply rotations
         s_arr_trans = np.rot90(s_arr_trans, rot, (3,2))
         coords = self._rotate_coord(coords, rot)
-        sp_arr_trans = np.rot90(sp_arr_trans, rot, (3,2))
 
         # Conver back to actions from coords
         a_arr_trans = self._coord_to_action(coords)
 
-        return s_arr_trans, a_arr_trans, sp_arr_trans
+        return s_arr_trans, a_arr_trans
 
 
-    def _exploit_symmetries(self, s_arr, a_arr, r_arr, sp_arr, d_arr, v_arr):
+    def _exploit_symmetries(self, s_arr, a_arr, v_arr):
         """
         Takes a list of examples, an replicates them using rotational and reflectional symmetries
         them to provide more training examples
@@ -247,24 +217,12 @@ class ReplayBuffer(object):
                     shape = (n, 3, s, s)
             a_arr: np.ndarray of actions of the samples
                     shape = (n,)
-            r_arr: np.ndarray of reward of the samples
-                    shape = (n,)
-            sp_arr: np.ndarray of next state of the sars samples
-                    shape = (n, 3, s, s)
-            done_mask: np.ndarray for done mask. 1.0 if the sars example is a terminal one
-                    shape = (n,)
             v_arr: np.ndarry of values for the state (we know the actual value of a game after its done)
                     shape = (n,)
         Returns:
             s_arr: np.ndarray of initial state of the sars samples
                     shape = (8n, 3, s, s)
             a_arr: np.ndarray of actions of the samples
-                    shape = (8n,)
-            r_arr: np.ndarray of reward of the samples
-                    shape = (8n,)
-            sp_arr: np.ndarray of next state of the sars samples
-                    shape = (8n, 3, s, s)
-            done_mask: np.ndarray for done mask. 1.0 if the sars example is a terminal one
                     shape = (8n,)
             v_arr: np.ndarry of values for the state (we know the actual value of a game after its done)
                     shape = (8n,)
@@ -274,9 +232,6 @@ class ReplayBuffer(object):
 
         new_s_arr = np.zeros((arr_len,) + self._s_shape)
         new_a_arr = np.zeros((arr_len,))
-        new_r_arr = np.zeros((arr_len,))
-        new_sp_arr = np.zeros((arr_len,) + self._s_shape)
-        new_d_arr = np.zeros((arr_len,))
         new_v_arr = np.zeros((arr_len,))
 
         for i in range(8):
@@ -284,21 +239,16 @@ class ReplayBuffer(object):
             end = old_arr_len * (i+1)
             reflect = ((i // 4) == 1)
             rot = i % 4
-            s,a,sp = self._apply_transform(reflect, rot, s_arr, a_arr, sp_arr)
+            s,a = self._apply_transform(reflect, rot, s_arr, a_arr)
 
             # Use the stepping operator "::" in numpy to appropriately distribute the transformed values across 
             # the new array. Because if for example, if there were a buffer of size 40, and we added 8 examples, the 
             # 8th orientation would never be put in the buffer for example. This is to prevent biasing problems as such
             new_s_arr[i::8] = s
             new_a_arr[i::8] = a
-            new_r_arr[i::8] = r_arr
-            new_sp_arr[i::8] = sp
-            new_d_arr[i::8] = d_arr
             new_v_arr[i::8] = v_arr
 
-        return new_s_arr, new_a_arr, \
-               new_r_arr, new_sp_arr, \
-               new_d_arr, new_v_arr
+        return new_s_arr, new_a_arr, new_v_arr
 
 
     def _decode_sarses(self, sarses):
@@ -312,30 +262,21 @@ class ReplayBuffer(object):
         """
         s_div = self._s_size
         a_div = self._a_size + s_div
-        r_div = self._r_size + a_div
-        d_div = self._d_size + r_div
-        v_div = self._v_size + d_div
 
         s =  sarses[:,      :s_div]
         a =  sarses[:, s_div:a_div]
-        r =  sarses[:, a_div:r_div]
-        d =  sarses[:, r_div:d_div]
-        v =  sarses[:, d_div:v_div]
-        sp = sarses[:, v_div:     ]
+        v =  sarses[:, a_div:     ]
 
         s = np.reshape(s, (-1,) + self._s_shape)
         a = np.reshape(a, (-1,) + self._a_shape)
-        r = np.reshape(r, (-1,) + self._r_shape)
-        sp = np.reshape(sp, (-1,) + self._s_shape)
-        d = np.reshape(d, (-1,) + self._d_shape)
         v = np.reshape(v, (-1,) + self._v_shape)
 
-        return (s,a,r,sp,d,v)
+        return (s,a,v)
 
 
         
 
-    def store_example(self, s, a, r, sp, done, value):
+    def store_example(self, s, a, value):
         """
         Adds one sars example to the internal queue. Has the side effect of removing the oldest example from the buffer 
         if the buffer is full
@@ -349,14 +290,11 @@ class ReplayBuffer(object):
         """
         s = np.expand_dims(s, axis=0)
         a = np.expand_dims(a, axis=0)
-        r = np.expand_dims(r, axis=0)
-        sp = np.expand_dims(sp, axis=0)
-        d = np.expand_dims(done, axis=0)
         v = np.expand_dims(value, axis=0)
-        self.store_example_batch(s,a,r,sp,d,v)
+        self.store_example_batch(s,a,v)
         
 
-    def store_example_batch(self, s_arr, a_arr, r_arr, sp_arr, done_mask, v_arr):
+    def store_example_batch(self, s_arr, a_arr, v_arr):
         """
         Same as store_example, except each of s, a, r, sp is an array 
         Args:
@@ -369,13 +307,10 @@ class ReplayBuffer(object):
         """
         s_arr = np.array(s_arr)
         a_arr = np.array(a_arr).flatten() # flatten to not have to deal with (n,) vs (n,1) shapes
-        r_arr = np.array(r_arr).flatten()
-        sp_arr = np.array(sp_arr)
-        done_mask = np.array(done_mask).flatten()
         v_arr = np.array(v_arr).flatten()
 
-        s_arr,a_arr,r_arr,sp_arr,done_mask,v_arr = self._exploit_symmetries(s_arr,a_arr,r_arr,sp_arr,done_mask,v_arr)
-        sarses = self._encode_sarses(s_arr, a_arr, r_arr, sp_arr, done_mask, v_arr)
+        s_arr,a_arr,v_arr = self._exploit_symmetries(s_arr,a_arr,v_arr)
+        sarses = self._encode_sarses(s_arr, a_arr, v_arr)
 
         sarses_len = sarses.shape[0]
         if not self.should_sample: 
@@ -384,8 +319,8 @@ class ReplayBuffer(object):
         self._pop(sarses_len)
         self._push(sarses)
 
-    def sample(self, n):
 
+    def sample(self, n):
         """
         Sample n examples from the replay buffer
         Throws an exception if the replay buffer isn't properly initialized (i.e. the internal queue isn't full)
@@ -410,9 +345,6 @@ if __name__ == "__main__":
     rb = ReplayBuffer(3*8, 2)
     ss = []
     aa = []
-    rr = []
-    spsp = []
-    dd = []
     vv = []
     for i in range(3):
         s = np.array([[[i,i],
@@ -422,22 +354,11 @@ if __name__ == "__main__":
                       [[i,i],
                        [i,i]]])
         a = np.array([i])
-        r = np.array([i])
-        sp = np.array([[[i+1,i],
-                       [i,i+1]],
-                      [[i+1,i],
-                       [i,i+1]],
-                      [[i+1,i],
-                       [i,i+1]]])
-        d = np.array([0.0] if i != 2 else [1.0])
         v = np.array([-1.0] if i != 1 else [1.0])
         ss.append(s)
         aa.append(a)
-        rr.append(r)
-        spsp.append(sp)
-        dd.append(d)
         vv.append(v)
-    rb.store_example_batch(ss, aa, rr, spsp, dd, vv)
+    rb.store_example_batch(ss, aa, vv)
     print(rb._queue)
     print("Sample 1 (5 times):")
     for _ in range(5): print(rb.sample(1))
@@ -453,14 +374,6 @@ if __name__ == "__main__":
                                    [[0,0],
                                     [0,1]]]),
                          np.array([3]),
-                         np.array([3]),
-                         np.array([[[0,1],
-                                    [1,1]],
-                                   [[1,0],
-                                    [0,0]],
-                                   [[0,0],
-                                    [0,0]]]),
-                         [1.0],
                          [0.0])
     print("Sample 3 (with all changed to be same example):")
     print(rb.sample(3))
