@@ -669,7 +669,7 @@ class N(object):
                     # if values[-1] == reward, then it's 1, if values[-1] != reward, then it's -1
                     backpropogated_rewards = np.array([reward] * len(states))
                     # TODO this discounts the later states more than earlier states, it's backwards isn't it?
-                    discounts = np.array([self.config.gamma ** i for i in range(len(states))])
+                    discounts = np.array(list(reversed([self.config.gamma ** i for i in range(len(states))])))
                     discounted_values = backpropogated_rewards * discounts
                     # TODO fix args to this, don't need many of them
                     # hack so I don't have to mess with replay_buffer implementation
