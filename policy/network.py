@@ -4,6 +4,8 @@ import numpy as np
 import logging
 import time
 import sys
+import subprocess
+import random
 from gym import wrappers
 from collections import deque
 
@@ -40,8 +42,8 @@ class N(object):
 
         # Create the environments to use (and reset to populate them with info)
         self.board_size = board_size
-        #self.env = gym.make(self._self_play_env_name)
-        self.env = gym.make(self._pachi_env_name)
+        self.env = gym.make(self._self_play_env_name)
+        #self.env = gym.make(self._pachi_env_name)
         self.env.reset()
         self.pachi_env = gym.make(self._pachi_env_name)
         self.pachi_env.reset()
@@ -282,10 +284,30 @@ class N(object):
         Save a checkpoint of the current params
         Args:
             timestep: the time for which we are checkpointing
+        Returns:
+            the filename of the checkpoint
         """
         if not os.path.exists(self.config.model_checkpoint_output):
             os.makedirs(self.config.model_checkpoint_output)
         self.saver.save(self.sess, self.config.model_checkpoint_output + str(timestep))
+        return self.config.model_checkpoint_output + str(timestep)
+    
+    def freeze(self, checkpoint_f, output_f):
+        """
+        Given the filename of a checkpoint, freezes it and saves the result in output_f.
+        """
+        command = (("python -m tensorflow.python.tools.freeze_graph " +
+                        "--input_graph=%s --input_checkpoint=%s --output_graph=%s " +
+                        "--output_node_names=out") % (self.config.graph_path,
+                        checkpoint_f, output_f))
+        print("Running command:")
+        print(command)
+        subprocess.call(command, shell=True)
+
+
+    def update_opponent(self,opponent_f):
+        raise NotImplementedError
+        
 
 
     def save(self):
@@ -419,6 +441,22 @@ class N(object):
         action_values = self.sess.run(self.outputs, feed_dict={self.s: [state]})[0]
         best_action_idx = np.argmax(action_values[valid_actions])      # get index into valid_actions of the best action to take
         return valid_actions[best_action_idx], action_values, valid_actions
+
+    def get_opponent_best_valid_action(self, state):
+        """
+        Return best action (its the same regardless of if the function learned is p or Q)
+
+        Args:
+            state: the state to get the best (valid) action for
+        Returns:
+            action: (int) the best action
+            action_values: (np array) q/p values for all actions
+            valid_actions: (array) of indices that are valid
+        """
+        valid_actions = self._get_valid_action_indices(state)
+        action_values = self.sess.run(self.opponent_outputs, feed_dict={self.s: [state]})[0]
+        best_action_idx = np.argmax(action_values[valid_actions])      # get index into valid_actions of the best action to take
+        return valid_actions[best_action_idx], action_values, valid_actions
     
 
     def update_target_params(self):
@@ -453,9 +491,13 @@ class N(object):
 
         t = last_eval = last_record = 0 # time control of nb of steps
         scores_eval = [] # list of scores computed at iteration time
-        scores_eval += [self.evaluate(t)]
+        scores_eval += [self.evaluate(t)[0]]
         
         prog = Progbar(target=self.config.nsteps_train)
+
+        # files for writing stuff
+        train_game_length_f = open("train_game_lengths.txt", 'w', buffering=1)
+        eval_game_length_f = open("eval_game_lengths.txt", 'w', buffering=1)
 
         # interact with environment
         while t < self.config.nsteps_train:
@@ -467,10 +509,22 @@ class N(object):
             next_states = []
             done_mask = []
             values_guess = []
+            opponents = []
             while True:
                 t += 1
                 last_eval += 1
                 last_record += 1
+
+                # this is where we save and load past opponents
+                if t % self.config.checkpoint_freq == 0:
+                  checkpoint_f = self.checkpoint(t)
+                  frozen_checkpoint = self.config.opponent_dir + 'opponent' + str(t / 500)
+                  # after saving, need to freeze graph so can load later
+                  self.freeze(checkpoint_f, frozen_checkpoint)
+                  opponents.append(frozen_checkpoint)
+                  opponent_file = random.sample(opponents, 1)[0]
+                  self.update_opponent(opponent_file)
+
 
                 if self.config.render_train: self.env.render()
 
@@ -496,7 +550,10 @@ class N(object):
                 rewards.append(reward)
                 episode_rewards.append(reward)
                 next_states.append(self._board_from_player_perspective(new_state, player))
-                if done: done_mask.append(1.0)
+                if done: 
+                  done_mask.append(1.0)
+                  game_length = len(states)
+                  train_game_length_f.write(str(game_length) + '\n')
                 else: done_mask.append(0.0)
                 if t % 2 == 0: values_guess.append(1.0)
                 else: values_guess.append(-1.0)
@@ -541,12 +598,16 @@ class N(object):
                 # evaluate our policy
                 last_eval = 0
                 print("")
-                scores_eval += [self.evaluate(t)]
+                eval_avg_reward, eval_avg_length = self.evaluate(t)
+                scores_eval += [eval_avg_reward]
+                eval_game_length_f.write(str(eval_avg_length) + '\n')
 
         # last words
         self.logger.info("- Training done.")
         self.save()
-        scores_eval += [self.evaluate(t)]
+        eval_avg_reward, eval_avg_length = self.evaluate(t)
+        scores_eval += [eval_avg_reward]
+        eval_game_length_f.write(str(eval_avg_length) + '\n')
 
 
     def train_step(self, t, replay_buffer, lr):
@@ -569,8 +630,8 @@ class N(object):
             self.update_target_params()
             
         # occasionaly save the weights
-        if (t % self.config.checkpoint_freq == 0):
-            self.checkpoint(t)
+        #if (t % self.config.checkpoint_freq == 0):
+        #    self.checkpoint(t)
 
         return loss_eval, grad_eval
 
@@ -653,21 +714,24 @@ class N(object):
 
         # replay memory to play
         rewards = []
-
+        game_lengths = []
         for i in range(num_episodes):
             total_reward = 0
             state = env.reset()
+            game_length = 0
             while True:
                 if self.config.render_test: env.render()
 
                 # Play a step
                 action, _, _ = self.get_best_valid_action(state)
+                game_length += 1
                 new_state, reward, done, info = env.step(action)
                 state = new_state
 
                 # Count rewards
                 total_reward += reward
                 if done:
+                    game_lengths += [game_length]
                     break
 
             # updates to perform at the end of an episode
@@ -680,7 +744,9 @@ class N(object):
             msg = "Average reward: {:04.2f} +/- {:04.2f}".format(avg_reward, sigma_reward)
             self.logger.info(msg)
 
-        return avg_reward
+        avg_length = sum(game_lengths) / len(game_lengths)
+
+        return avg_reward, avg_length
 
 
 

@@ -10,27 +10,30 @@ class bntconfig():
     target_scope = "default_target"    	# variable scope for target network 
 
     # model and training config
-    version           = 0               # useage internal to config
+    version           = 1               # useage internal to config
     prev_version      = 0
     board_size        = 5
     num_episodes_test = 10
     grad_clip         = True
     clip_val          = 10
-    checkpoint_freq   = 5000
+    checkpoint_freq   = 500
     gamma             = 0.99            # still want to discount, because prefer to win quick...
     log_freq          = 50
     eval_freq         = 2500
     soft_epsilon      = 0
 
     # output config
-    output_path             = "results/"
     model_name              = str(board_size)+'x'+str(board_size)+'.v'+str(version)
-    model_output            = output_path + model_name + ".weights/"
-    model_checkpoint_output = output_path + "checkpoints/" + model_name + ".weights/"
+    output_path             = "results/" + model_name + '/'
+    model_output            = output_path + "weights/"
+    model_checkpoint_output = output_path + "checkpoints/" 
     log_path                = output_path + "log.txt"
+    graph_name              = "graph_save.pb"
+    graph_path              = output_path + graph_name
+    opponent_dir            = output_path + "opponents/"
 
     # hyper params
-    nsteps_train       = 30000
+    nsteps_train       = 1000000
     batch_size         = 32
     buffer_size        = 500
     target_update_freq = 50

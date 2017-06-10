@@ -61,6 +61,12 @@ class BasicNetwork(N):
 
 
 
+    def update_opponent(self, opponent_f):
+        with gfile.FastGFile(opponent_f, 'rb') as f:
+          graph_def = tf.GraphDef()
+          graph_def.ParseFromString(f.read())
+        self.opponent_out = tf.import_graph_def(graph_def, input_map={"state_input:0" : self.s}, return_elements=['out:0'])[0]
+
     def get_output_op(self, state, scope, reuse=False):
         """
         Get the tf op for the output of the networ
@@ -176,7 +182,7 @@ class BasicNetwork(N):
         # export the meta graph now, so that it doesn't include optimizer variables
         if scope==self.config.scope:
           graph = tf.get_default_graph()
-          tf.train.write_graph(graph, self.config.output_path, self.config.model_name+'graph_save.pb')
+          tf.train.write_graph(graph, self.config.output_path, self.config.graph_name)
 
         ##############################################################
         ######################## END YOUR CODE #######################
