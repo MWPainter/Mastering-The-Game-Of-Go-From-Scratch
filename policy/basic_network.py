@@ -61,11 +61,11 @@ class BasicNetwork(N):
 
 
 
-    def update_opponent(self, opponent_f):
+    def get_opponent_out(self, opponent_f):
         with gfile.FastGFile(opponent_f, 'rb') as f:
           graph_def = tf.GraphDef()
           graph_def.ParseFromString(f.read())
-        self.opponent_out = tf.import_graph_def(graph_def, input_map={"state_input:0" : self.s}, return_elements=['out:0'])[0]
+        return tf.import_graph_def(graph_def, input_map={"state_input:0" : self.s}, return_elements=['out:0'])[0]
 
     def get_output_op(self, state, scope, reuse=False):
         """

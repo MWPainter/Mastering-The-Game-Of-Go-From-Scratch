@@ -551,16 +551,16 @@ class N(object):
             episode_rewards = [] # don't think we need this TODO
             next_states = []     # don't think we need this TODO
             done_mask = []
-            # this is where we save and load past opponents
+            # this is where we save opponents
             if t == 0 or (t - last_opponent_update) >  self.config.checkpoint_freq: 
               checkpoint_f = self.checkpoint(t)
               frozen_checkpoint = self.config.opponent_dir + 'opponent' + str(t // 500)
               # after saving, need to freeze graph so can load later
               self.freeze(checkpoint_f, frozen_checkpoint)
-              opponents.append(frozen_checkpoint)
-              opponent_file = random.sample(opponents, 1)[0]
-              self.update_opponent(opponent_file)
+              opponents.append(self.get_opponent_out(frozen_checkpoint))
               last_opponent_update = t
+            # randomly sample an opponent 
+            self.opponent_out = random.sample(opponents, 1)[0]
             # determine player color. If white, let opponent move first.
             if random.choice([True, False]):
               # Who's turn is it?
@@ -585,7 +585,10 @@ class N(object):
 
 
 
-                if self.config.render_train: self.env.render()
+                
+                if self.config.render_train: 
+                  print("Board before agent moves:")
+                  self.env.render()
 
                 # Who's turn is it?
                 player = self.env.state.color
@@ -601,6 +604,9 @@ class N(object):
 
                 # perform action in env
                 new_state, reward, done, info = self.env.step(action)
+                if self.config.render_train: 
+                  print("Board after agent moves:")
+                  self.env.render()
 
                 # Store the s, a, new_s, for later use in replay buffer
                 # Guessing the rewards, to be corrected when the game finishes
@@ -668,9 +674,9 @@ class N(object):
                     # multiplying by (values[-1] * reward) is correct. If reward == 0 it zeros the array
                     # if values[-1] == reward, then it's 1, if values[-1] != reward, then it's -1
                     backpropogated_rewards = np.array([reward] * len(states))
-                    # TODO this discounts the later states more than earlier states, it's backwards isn't it?
                     discounts = np.array(list(reversed([self.config.gamma ** i for i in range(len(states))])))
                     discounted_values = backpropogated_rewards * discounts
+                    #print(discounted_values)
                     # TODO fix args to this, don't need many of them
                     # hack so I don't have to mess with replay_buffer implementation
                     replay_buffer.store_example_batch(states, actions, episode_rewards, next_states, done_mask, discounted_values)
