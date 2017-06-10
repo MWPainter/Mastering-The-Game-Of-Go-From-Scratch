@@ -10,7 +10,7 @@ class bntconfig():
     target_scope = "default_target"    	# variable scope for target network 
 
     # model and training config
-    version           = 2               # useage internal to config
+    version           = 6               # useage internal to config
     prev_version      = 1
     board_size        = 5
     num_episodes_test = 5
@@ -37,10 +37,10 @@ class bntconfig():
     batch_size         = 32
     buffer_size        = 500 * 8 # 8 times how long before we start learning, because we add 8 examples per self play step, by symmetries
     target_update_freq = 50
-    lr_begin           = 0.1
-    lr_end             = 0.0003
+    lr_begin           = 0.003
+    lr_end             = 0.001
     lr_nsteps          = nsteps_train/2
-    eps_begin          = 1
+    eps_begin          = 0.2
     eps_end            = 0.02
     eps_nsteps         = nsteps_train/2
     learning_start     = 500

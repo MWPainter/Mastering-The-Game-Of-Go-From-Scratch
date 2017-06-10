@@ -555,6 +555,7 @@ class N(object):
             episode_rewards = [] # don't think we need this TODO
             next_states = []     # don't think we need this TODO
             done_mask = []
+            training_agent_is_black = True
             # this is where we save opponents
             if t == 0 or (t - last_opponent_update) >  self.config.checkpoint_freq: 
               checkpoint_f = self.checkpoint(t)
@@ -567,6 +568,9 @@ class N(object):
             self.opponent_out = random.sample(opponents, 1)[0]
             # determine player color. If white, let opponent move first.
             if random.choice([True, False]):
+              # Agent being trained is playing as white
+              training_agent_is_black = False
+
               # Who's turn is it?
               player = self.env.state.color
 
@@ -680,6 +684,16 @@ class N(object):
                     backpropogated_rewards = np.array([reward] * len(states))
                     discounts = np.array(list(reversed([self.config.gamma ** i for i in range(len(states))])))
                     discounted_values = backpropogated_rewards * discounts
+                    if (training_agent_is_black and ((self.env.state.board.official_score > 0 and \
+                                                      reward > 0) or \
+                                                     (self.env.state.board.official_score < 0 and \
+                                                      reward < 0))) or \
+                       (not training_agent_is_black and ((self.env.state.board.official_score > 0 and \
+                                                         reward < 0) or \
+                                                         (self.env.state.board.official_score < 0 and \
+                                                         reward > 0))):
+                        print("Waaaaaaah")
+                                                         
                     #print(discounted_values)
                     # TODO fix args to this, don't need many of them
                     # hack so I don't have to mess with replay_buffer implementation
