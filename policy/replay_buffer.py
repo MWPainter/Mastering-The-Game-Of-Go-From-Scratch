@@ -286,35 +286,19 @@ class ReplayBuffer(object):
             rot = i % 4
             s,a,sp = self._apply_transform(reflect, rot, s_arr, a_arr, sp_arr)
 
-            new_s_arr[beg:end] = s
-            new_a_arr[beg:end] = a
-            new_r_arr[beg:end] = r_arr
-            new_sp_arr[beg:end] = sp
-            new_d_arr[beg:end] = d_arr
-            new_v_arr[beg:end] = v_arr
+            # Use the stepping operator "::" in numpy to appropriately distribute the transformed values across 
+            # the new array. Because if for example, if there were a buffer of size 40, and we added 8 examples, the 
+            # 8th orientation would never be put in the buffer for example. This is to prevent biasing problems as such
+            new_s_arr[i::8] = s
+            new_a_arr[i::8] = a
+            new_r_arr[i::8] = r_arr
+            new_sp_arr[i::8] = sp
+            new_d_arr[i::8] = d_arr
+            new_v_arr[i::8] = v_arr
 
-        # Interlace the transforms, because we don't want to bias one orientation over another
-        # (E.g. if buffer were of size 40, and we added 8 examples, the 8th orientation would never get put in the buffer)
-        reord_new_s_arr = np.zeros((arr_len,) + self._s_shape)
-        reord_new_a_arr = np.zeros((arr_len,))
-        reord_new_r_arr = np.zeros((arr_len,))
-        reord_new_sp_arr = np.zeros((arr_len,) + self._s_shape)
-        reord_new_d_arr = np.zeros((arr_len,))
-        reord_new_v_arr = np.zeros((arr_len,))
-
-        for i in range(old_arr_len):
-            beg = 8 * i
-            end = 8 * (i+1)
-            reord_new_s_arr[beg:end] = new_s_arr[i::old_arr_len]
-            reord_new_a_arr[beg:end] = new_a_arr[i::old_arr_len]
-            reord_new_r_arr[beg:end] = new_r_arr[i::old_arr_len]
-            reord_new_sp_arr[beg:end] = new_sp_arr[i::old_arr_len]
-            reord_new_d_arr[beg:end] = new_d_arr[i::old_arr_len]
-            reord_new_v_arr[beg:end] = new_v_arr[i::old_arr_len]
-
-        return reord_new_s_arr, reord_new_a_arr, \
-               reord_new_r_arr, reord_new_sp_arr, \
-               reord_new_d_arr, reord_new_v_arr
+        return new_s_arr, new_a_arr, \
+               new_r_arr, new_sp_arr, \
+               new_d_arr, new_v_arr
 
 
     def _decode_sarses(self, sarses):
