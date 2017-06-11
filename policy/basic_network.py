@@ -93,16 +93,16 @@ class BasicNetwork(N):
         board_rep = self._build_pure_convolution(inpt=state, num_layers=5, num_filters=32, scope=scope)
                
         # Build the output layers (1x1 convolution + softmax)
-        output, logits = self._add_output_layers(inpt=board_rep
+        output, logits = self._add_output_layers(inpt=board_rep, scope=scope)
 
         # need to name this operation so we can access it for transfer learning
         # when loading the graph from the save
-        output = tf.identity(output, name ='output')
+        # Therefore this must *necessarily* be called 'out'
+        output = tf.identity(output, name ='out')
 
         # export the meta graph now, so that it doesn't include optimizer variables
-        if scope==self.config.scope:
-          graph = tf.get_default_graph()
-          tf.train.write_graph(graph, self.config.output_path, self.config.graph_name)
+        graph = tf.get_default_graph()
+        tf.train.write_graph(graph, self.config.output_path, self.config.graph_name)
 
         return output, logits
 
@@ -128,6 +128,7 @@ class BasicNetwork(N):
                 with tf.variable_scope("layer_%d" % i):
                     next_layer = layers.conv2d(
                                             inputs=next_layer,
+                                            kernel_size=kernel_size,
                                             num_outputs=num_filters,
                                             stride=1,
                                             padding='SAME',
@@ -154,7 +155,7 @@ class BasicNetwork(N):
         with tf.variable_scope(scope):
             # last layer: kernel_size 1, one filter, and different bias for each position (action)
             x = layers.conv2d(
-                            inputs=inpts, 
+                            inputs=inpt, 
                             num_outputs=1, 
                             kernel_size=1,
                             stride=1)
@@ -163,7 +164,7 @@ class BasicNetwork(N):
           
             # apply different bias to each position
             bias = tf.get_variable(name="last_conv_b",dtype=tf.float32, shape=[self.config.board_size**2], initializer=tf.zeros_initializer)
-            logits = x + last_bias
+            logits = x + bias
     
             # apply softmax
             probs = tf.nn.softmax(logits)
