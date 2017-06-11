@@ -136,6 +136,7 @@ class BasicNetwork(N):
                                             padding='SAME',
                                             activation_fn=tf.nn.relu,
                                             biases_initializer=tf.zeros_initializer)
+        next_layer = tf.identity(next_layer, name="final_features")
         return next_layer
 
 

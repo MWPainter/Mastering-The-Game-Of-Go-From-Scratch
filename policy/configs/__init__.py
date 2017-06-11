@@ -1,1 +1,2 @@
 from .basic_network_test_config import bntconfig
+from .composite_network_config import compositeConfig

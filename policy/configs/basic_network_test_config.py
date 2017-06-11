@@ -9,7 +9,7 @@ class bntconfig():
     scope = "default"            # variable scope for network
 
     # model and training config
-    version           = 11 # useage internal to config
+    version           = 117 # useage internal to config
     prev_version      = 1
     board_size        = 5
     num_episodes_test = 5
@@ -27,8 +27,8 @@ class bntconfig():
     # output config
     model_name              = str(board_size)+'x'+str(board_size)+'.v'+str(version)
     output_path             = "results/" + model_name + '/'
-    model_output            = output_path + "weights/"
-    frozen_model_output     = output_path + "weights/graph_save.pb"
+    model_output            = output_path + "weights"
+    frozen_model_output     = output_path + "final_graph"
     model_checkpoint_output = output_path + "checkpoints/" 
     log_path                = output_path + "log.txt"
     graph_name              = "graph_save.pb"
@@ -36,7 +36,8 @@ class bntconfig():
     opponent_dir            = output_path + "opponents/"
 
     # hyper params
-    nsteps_train       = 200000
+    #nsteps_train       = 200000
+    nsteps_train       = 2000
     batch_size         = 32
     buffer_size        = 500 * 8 # 8 times how long before we start learning, because we add 8 examples per self play step, by symmetries
     lr_begin           = 0.005

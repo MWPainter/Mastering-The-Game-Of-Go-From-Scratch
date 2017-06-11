@@ -43,7 +43,7 @@ class N(object):
             os.makedirs(config.opponent_dir)
 
         # Create the environments to use (and reset to populate them with info)
-        self.board_size = self.config.board_size
+        self.board_size = config.board_size
         self.env = gym.make(self._self_play_env_name)
         self.env.reset()
         self.pachi_env = gym.make(self._pachi_env_name)
@@ -53,7 +53,7 @@ class N(object):
         self.board_shape = self.env.state.board.encode().shape
         self.action_shape = ()
         self.reward_shape = ()
-        self.num_actions = board_size ** 2
+        self.num_actions = self.board_size ** 2
             
         # store hyper params
         self.config = config
@@ -340,6 +340,7 @@ class N(object):
         if not os.path.exists(self.config.model_output):
             os.makedirs(self.config.model_output)
         self.saver.save(self.sess, self.config.model_output)
+        self.freeze(self.config.model_output, self.config.frozen_model_output)
 
 
 
