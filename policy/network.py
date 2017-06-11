@@ -26,7 +26,7 @@ class N(object):
     ### Construction                        ###
     ###########################################
 
-    def __init__(self, board_size, config, logger=None):
+    def __init__(self, config, logger=None):
         """
         Initialize network
 
@@ -43,7 +43,7 @@ class N(object):
             os.makedirs(config.opponent_dir)
 
         # Create the environments to use (and reset to populate them with info)
-        self.board_size = board_size
+        self.board_size = self.config.board_size
         self.env = gym.make(self._self_play_env_name)
         self.env.reset()
         self.pachi_env = gym.make(self._pachi_env_name)
@@ -260,23 +260,19 @@ class N(object):
         Set training op wrt to loss for variable in scope
         """
         raise NotImplementedError
-
+    
 
     def process_state(self, state):
         """
         Processing of state
-
         State placeholders are tf.uint8 for fast transfer to GPU
         Need to cast it to float32 for the rest of the tf graph.
-
         Args:
             state: node of tf graph of shape = (batch_size, height, width, nchannels)
-                    of type tf.uint8.
+                   of type tf.uint8.
         """
         state = tf.cast(state, tf.float32)
-
         return state
-
 
 
 

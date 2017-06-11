@@ -223,7 +223,7 @@ if __name__ == '__main__':
     lr_schedule  = LinearSchedule(config.lr_begin, config.lr_end, config.lr_nsteps)
 
     # train model
-    model = BasicNetwork(config.board_size, config)
+    model = BasicNetwork(config)
     model.run(exp_schedule, lr_schedule)
 
 

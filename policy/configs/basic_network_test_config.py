@@ -28,6 +28,7 @@ class bntconfig():
     model_name              = str(board_size)+'x'+str(board_size)+'.v'+str(version)
     output_path             = "results/" + model_name + '/'
     model_output            = output_path + "weights/"
+    frozen_model_output     = output_path + "weights/graph_save.pb"
     model_checkpoint_output = output_path + "checkpoints/" 
     log_path                = output_path + "log.txt"
     graph_name              = "graph_save.pb"
