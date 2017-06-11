@@ -102,9 +102,6 @@ class N(object):
         init = tf.global_variables_initializer()
         self.sess.run(init)
 
-        # synchronise network and target network
-        self.sess.run(self.update_target_op)
-
         # for saving networks weights
         self.saver = tf.train.Saver()
 
@@ -242,19 +239,6 @@ class N(object):
             state: The state (input to network)
             scope: scope to use with the network
             reuse: reuse variables
-        """
-        raise NotImplementedError
-
-
-    def add_update_target_op(self, scope, target_scope):
-        """
-        Returns the update target op
-        When run it should copy the variables from inside scope 'scope' to scope 'target_scope'
-        It's called periodically to update the target network
-    
-        Args:
-            scope: name of the scope of variables in the network being trained
-            target_scope: name of the scope of variables in the target network
         """
         raise NotImplementedError
 
@@ -512,13 +496,6 @@ class N(object):
         return valid_actions[best_action_idx], action_values, valid_actions
     
 
-    def update_target_params(self):
-        """
-        Update params of target network (just runs the op)
-        """
-        self.sess.run(self.update_target_op)
-
-
     ###########################################
     ### Training loop + eval                ###
     ###########################################
@@ -639,7 +616,6 @@ class N(object):
 
                 # now that we know the true reward (after opponent taking action) we can update it
                 rewards.append(reward)
-                episode_rewards.append(reward)
 
                 # perform a training step
                 loss_eval, grad_eval = self.train_step(t, replay_buffer, lr_schedule.epsilon)
@@ -710,10 +686,6 @@ class N(object):
         if t > self.config.learning_start and replay_buffer.should_sample:
             loss_eval, grad_eval = self.update_step(t, replay_buffer, lr)
 
-        # occasionaly update target network with q network
-        if t % self.config.target_update_freq == 0:
-            self.update_target_params()
-            
         # Used to checkpoint here and 'occasionally save the weights'
         # But we had to move this to the main training loop (because of the opponent pool)
         #if (t % self.config.checkpoint_freq == 0):
@@ -734,7 +706,7 @@ class N(object):
             loss: (Q - Q_target)^2
         """
 
-        s_batch, a_batch, _, _, _, v_batch = replay_buffer.sample(self.config.batch_size)
+        s_batch, a_batch, v_batch = replay_buffer.sample(self.config.batch_size)
 
 
         fd = {
@@ -840,10 +812,6 @@ class N(object):
         # initialize
         self.initialize()
 
-        # record one game at the beginning
-        if self.config.record:
-            self.record()
-
         # model
         self.train(exp_schedule, lr_schedule)
 
@@ -882,10 +850,6 @@ class VN(N):
     def run(self, exp_schedule, lr_schedule):
         raise NotImplementedError
     
-    # Functions that maybe should be implemented?
-    def update_target_params(self):
-        pass
-
     # Functions that shouldn't be implemented
     def get_best_valid_action(self, state):
         pass

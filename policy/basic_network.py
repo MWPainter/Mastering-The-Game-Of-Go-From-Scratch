@@ -155,6 +155,7 @@ class BasicNetwork(N):
                             biases_initializer=tf.zeros_initializer)
                
         x = tf.identity(x, name='final_features') # for transfer learning
+        logits = None
         with tf.variable_scope(scope):
           # last layer: kernel_size 1, one filter, and different bias for each position (action)
           x = layers.conv2d(
@@ -187,7 +188,7 @@ class BasicNetwork(N):
         ##############################################################
         ######################## END YOUR CODE #######################
 
-        return out
+        return out, logits
 
 
 
