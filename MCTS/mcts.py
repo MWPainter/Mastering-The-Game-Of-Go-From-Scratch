@@ -9,13 +9,15 @@ We have the following sets: 'States', 'Actions', 'Players'
 A GameState instance needs to support the following members:
 
 gs.__init__(...) # setup game initial state
-gs.getActions() # return a list of possible actions the current player can make
+gs.get_actions() # return a list of possible actions the current player can make
 gs.winner() # None if no current winner, one of 'Players' if a player has won
-            # If a draw is possible, then (winner() == None and len(gs.getActions) == 0) is true
+            # If a draw is possible, then (winner() == None and len(gs.get_actions) == 0) is true
 gs.succ(action) # returns the successor state, if we take action 'action' from state 'gs' 
                 # this shouldn't clobber the old state (deep copy if necessary)
 gs.utility(player) # returns the utility of the state 'gs', for the player 'player'
 gs.player # the player who's turn it is (who can make the next move)
+gs.default_action # the default action to take, if we can't (somehow) decide on another move to make
+gs.resign_move # a move to resign if we know that we're going to loose
 
 To run the monty carlo tree search, we also need policies. A 'policy' is just a function that takes a state as input
 and will return a map from actions to weights (this defines a probability distribution and doesn't need to be normalized).
@@ -74,7 +76,7 @@ class TreeNode(object):
 
         :return: If this is the tree node for an end state
         """
-        return not(self.state.winner() == None and len(self.state.getActions()) > 0)
+        return not(self.state.winner() == None and len(self.state.get_actions()) > 0)
 
 
 
@@ -201,11 +203,11 @@ class MCTreeSearchAgent(object):
         rootNode.expand(self.selPolicy) 
         player = rootNode.state.player
         for i in range(self.iter):
-            leafNode = self.walkTree(rootNode) 
+            leafNode = self.walkTree(rootNode, gameState.default_action) 
             if (leafNode.endState()): continue            
             self.expand(leafNode) 
-            newLeafNode = self.step(leafNode) 
-            value = self.simulate(newLeafNode, player) 
+            newLeafNode = self.step(leafNode, gameState.default_action) 
+            value = self.simulate(newLeafNode, player, gameState.default_action) 
             self.backPropogation(newLeafNode, value) 
 
         # Brute force if we can win next move, then take it
@@ -213,12 +215,18 @@ class MCTreeSearchAgent(object):
             if rootNode.children[action].state.winner() == player:
                 return action
 
-        _, optAction = max([(rootNode.children[action].value, action) for action in rootNode.children])
+        optValue, optAction = max([(rootNode.children[action].value, action) for action in rootNode.children])
+    
+        # Resign if the optimal value is really bad...
+        if optValue < -0.8:
+            print("Agent resigning")
+            return gameState.resign_move
 
+        # If not, return the optimal action and try to win!
         return optAction
 
 
-    def walkTree(self, root):
+    def walkTree(self, root, default_action):
         """
         Selection.
         We stochastically walk the tree according to the distribution of weights stored in the 
@@ -236,6 +244,7 @@ class MCTreeSearchAgent(object):
         6. update node iterating variable
 
         :param root: The base TreeNode that we will be starting the walk from
+        :param default_action: The default action to use in 'util.selectRandomKey'
         :return: A leaf node, rooted at 'root', arrived to by stochastically walking tree 
         """
         node = root
@@ -243,7 +252,7 @@ class MCTreeSearchAgent(object):
             actionToWeight = node.getActionToWeightMap()
             if actionToWeight == {}:
                 return node
-            action = util.selectRandomKey(actionToWeight)
+            action = util.selectRandomKey(actionToWeight, default_action)
             nextNode = node.getSuccInTree(action)
             if nextNode == None:
                 return node
@@ -262,20 +271,21 @@ class MCTreeSearchAgent(object):
         node.expand(self.selPolicy)
 
 
-    def step(self, node):
+    def step(self, node, default_action):
         """
         Expansion. (Part 2).
         Take one step from (just expanded) node 'node', randomly according to selection policy.
 
         :param node: The node to take a step from
+        :param default_action: The default action to use in 'util.selectRandomKey'
         :return: The successor node
         """
         actionToWeight = node.getActionToWeightMap()
-        action = util.selectRandomKey(actionToWeight)
+        action = util.selectRandomKey(actionToWeight, default_action)
         return node.getSuccAfterExpand(action)
 
 
-    def simulate(self, root, player):
+    def simulate(self, root, player, default_action):
         """
         Simulate.
         Simulates the rest of the game, stochastically, from node 'root', using policy 
@@ -288,10 +298,11 @@ class MCTreeSearchAgent(object):
         :param root: the node to simulate the game from
         :param player: the player who we are trying to pick a good move for (back in the call to 
             'getAction').
+        :param default_action: The default action to use in 'util.selectRandomKey'
         """
-        while state.winner() == None and len(state.getActions()) > 0:
+        while state.winner() == None and len(state.get_actions()) > 0:
             actionToWeight = self.simPolicy(state)
-            action = util.selectRandomKey(actionToWeight)
+            action = util.selectRandomKey(actionToWeight, default_action)
             state = state.succ(action)
 
         return state.utility(player)

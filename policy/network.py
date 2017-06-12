@@ -515,10 +515,10 @@ class N(object):
         max_p_values = deque(maxlen=1000)
         p_values = deque(maxlen=1000)
         self.init_averages()
-        t = last_eval = last_record = 0                                         # time control of nb of steps
+        t = last_eval = last_record = 0             # time control of nb of steps
         episode = last_checkpoint = 0
-        scores_eval = [self.evaluate(t)[0]]                                     # list of scores computed at iteration time
-        opponents = []                                                          # opponents used to play against in training
+        scores_eval = [self.evaluate(t)[0]]         # list of scores computed at iteration time
+        opponents = []                              # opponents used to play against in training
         
         prog = Progbar(target=self.config.nsteps_train)
 
@@ -579,7 +579,7 @@ class N(object):
 
                 # perform action in env, and remember if the player just managed to loose the game
                 new_state, _, done, _ = self.env.step(action)
-                training_agent_lost_game = done
+                training_agent_made_last_move = done
 
                 # Render?
                 if self.config.render_train: 
@@ -649,7 +649,7 @@ class N(object):
 
                     # If the training agent lost the game, we want to make sure that their 
                     # LOOSING move has a negative value...
-                    if training_agent_lost_game and discounted_values[-1] > 0:
+                    if training_agent_made_last_move and discounted_values[-1] > 0:
                         discounted_values[-1] *= -1.0
                     
                                                          
@@ -762,7 +762,6 @@ class N(object):
         print("Heatmap for initial state, at time " + str(t))
         print(action_dist.reshape((self.config.board_size,self.config.board_size)))
 
-        # replay memory to play
         rewards = []
         game_lengths = []
         for i in range(num_episodes):
