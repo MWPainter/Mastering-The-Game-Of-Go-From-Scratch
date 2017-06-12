@@ -510,6 +510,7 @@ class N(object):
         """
 
         # initialize replay buffer and variables
+
         replay_buffer = ReplayBuffer(self.config.buffer_size, self.board_size)
         rewards = deque(maxlen=self.config.num_episodes_test)
         max_p_values = deque(maxlen=1000)
@@ -517,8 +518,15 @@ class N(object):
         self.init_averages()
         t = last_eval = last_record = 0             # time control of nb of steps
         episode = last_checkpoint = 0
-        scores_eval = [self.evaluate(t)[0]]         # list of scores computed at iteration time
-        opponents = []                              # opponents used to play against in training
+        opponents = []                                                          # opponents used to play against in training
+
+        # load model from checkpiont if necessary
+        if not self.config.checkpoint == -1:
+            self.saver.restore(self.sess, self.config.load_checkpoint_file)
+            opponents += [self.generate_opponent(t)]
+            t = self.config.checkpoint
+
+        scores_eval = [self.evaluate(t)[0]]                                     # list of scores computed at iteration time
         
         prog = Progbar(target=self.config.nsteps_train)
 
@@ -752,7 +760,7 @@ class N(object):
 
         # arguments defaults
         if num_episodes is None:
-            num_episodes = self.config.num_episodes_test
+            num_episodes = self.config.num_episodes_test*2
 
         if env is None:
             env = self.pachi_env
@@ -768,6 +776,14 @@ class N(object):
             total_reward = 0
             state = env.reset()
             game_length = 0
+
+            # If our agent should play as white, let the oponent make a move!
+            if i >= num_episodes/2:
+                print("Passing, so opponent can play first.")
+                # Let the opponent make a move
+                pass_action =  25
+                state, _, _, _ = env.step(pass_action)
+
             while True:
                 if self.config.render_test: env.render()
 

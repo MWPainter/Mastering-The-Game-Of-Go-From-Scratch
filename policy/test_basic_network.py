@@ -8,7 +8,6 @@ from network import N
 import gym
 from gym import wrappers
 from collections import deque
-from basic_network import BasicNetwork
 
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
@@ -22,10 +21,10 @@ from replay_buffer import ReplayBuffer
 import policy.configs
 
 
-
-
-
-class CompositeNetwork(BasicNetwork):
+class BasicNetwork(N):
+    """
+    Plain ol' CNN to play a (very) small game of go
+    """
 
 
     ###########################################
@@ -91,7 +90,9 @@ class CompositeNetwork(BasicNetwork):
         state = tf.transpose(state, [0,2,3,1]) # go inputs have channels first, need to transpose
 
         # Build a base cnn with 5 layers, and 32 filters
-        board_rep = self._build_pure_convolution(inpt=state, num_layers=5, num_filters=32, scope=scope)
+        num_layers = self.config.num_layers
+        num_filters = self.config.num_filters
+        board_rep = self._build_pure_convolution(inpt=state, num_layers=num_layers, num_filters=num_filters, scope=scope)
                
         # Build the output layers (1x1 convolution + softmax)
         output, logits = self._add_output_layers(inpt=board_rep, scope=scope)
@@ -122,15 +123,10 @@ class CompositeNetwork(BasicNetwork):
         Returns:
             The next layer to 
         """
-
-        # the below makes a representation of the board by passing it through 
-        # some convolutional layers. This will be stacked with representations
-        # passed through the transfer learning layers, and then passed through
-        # a final convolutional network.
         next_layer = inpt
         with tf.variable_scope(scope):
             for i in range(num_layers):
-                kernel_size = 5 if i == 0 else 3
+                kernel_size = 5 if i == 1 else 3
                 with tf.variable_scope("layer_%d" % i):
                     next_layer = layers.conv2d(
                                             inputs=next_layer,
@@ -140,141 +136,8 @@ class CompositeNetwork(BasicNetwork):
                                             padding='SAME',
                                             activation_fn=tf.nn.relu,
                                             biases_initializer=tf.zeros_initializer)
-        board_rep = next_layer
-
-        # Transfer learning
-        ######################################
-        # First, map large state to small in #
-        ######################################
-
-        # Method 1: convolution of small network
-        pbw = self.config.transfer_board_width; bw = self.config.board_size
-        num_strides = bw - pbw + 1
-        total_slices = num_strides**2
-        # first, get slices of board state. 
-        slices_start_indices = [(i,j) for i in range(num_strides) for j in range(num_strides)]
-        slices = [tf.slice(inpt, [0,i,j,0], [-1, pbw, pbw, -1]) for (i,j) in slices_start_indices]
-        # concatenate them so we can pass to small network in one batch
-        small_input1 = tf.concat(slices, axis=0)
-        small_input = tf.transpose(small_input1, [0,3,1,2])
-        small_input = tf.sigmoid(small_input)
-        small_input = tf.cast(small_input, tf.uint8)
-
-        # this loads the small graph, and sets its input to be model1_in
-        with gfile.FastGFile(self.config.transfer_model_f, 'rb') as f:
-          graph_def = tf.GraphDef()
-          graph_def.ParseFromString(f.read())
-        small_out = tf.import_graph_def(graph_def, input_map={"state_input:0" : small_input}, return_elements=['out:0'])[0]
-        # has shape [batch_size * num_slices, num_actions]
-        # small_out = tf.reshape(small_out, [-1, (pbw*pbw+2) * num_small_forwards])
-        # small_out_size = (pbw*pbw+2)*num_small_forwards
-
-        print(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES))
-        print([n.name for n in tf.get_default_graph().as_graph_def().node])
-
-        ######################################
-        # now, map small out to to large out #
-        ######################################
-
-        # Method 1: convolution of small network
-        # might be possible to vectorize all this with numpy indexing. TODO
-        # unstack slices first
-        slices = tf.split(small_out, total_slices, axis=0) # each slice has shape [batch_size, pbw**2]
-        # ignore pass action and resign action, and reshape into shape of small board
-        #slices = [s[:, :-2] for s in slices]
-        slices = [tf.reshape(s, [-1, pbw, pbw]) for s in slices] # [batch_size, pbw, pbw] 
-        # pad all the slices back to large board shape
-        # TODO convert paddings to tensor?
-        slices = [tf.pad(s, [[0,0],[i,bw-pbw-i],[j,bw-pbw-j]]) for (s,(i,j)) in zip(slices,slices_start_indices)]
-        transfer_out1 = tf.stack(slices, axis=3) # has size [-1, bw, bw, total_slices]
-        # concatenate this with normal board representation
-        board_rep = tf.concat([transfer_out1, board_rep], axis=3)
-
-
-        ###############################
-        # METHOD 2: CONV+SMALL+DECONV #
-        ###############################
-        # this is going to be hard to get working with general layer sizes
-        # FOR NOW, ASSUME THAT bw = pbw + 2*n for some integer n
-        conv_deconv_start_layers = 2 # number of convolution layers with SAME padding before VALID reduction
-        k = self.config.num_filters_global
-
-        with tf.variable_scope(scope):
-          x = inpt
-          for i in range(conv_deconv_start_layers):
-            #kernel_size = 5 if i == 1 else 3
-            with tf.variable_scope("cd_conv_layer_%d" % i):
-              x = tf.layers.conv2d(
-                            inputs=x, 
-                            filters=k, 
-                            kernel_size=3,
-                            strides=1,
-                            padding='same',
-                            activation=tf.nn.relu,
-                            bias_initializer=tf.zeros_initializer())
-          # every convolution with kernel_size=3, stride=1, and padding='valid' will reduce bw by 2
-          # so we need to reduce until size is equal to pbw
-          for i in range(bw, pbw, -2):
-            with tf.variable_scope("cd_red_layer_%d" % i): # "red" for "reduction"
-              if i == pbw + 2: # the last layer
-                k = 3 # the number of channels for board state
-              x = tf.layers.conv2d(
-                            inputs=x, 
-                            filters=k, 
-                            kernel_size=3,
-                            strides=1,
-                            padding='valid',
-                            activation=tf.nn.relu,
-                            bias_initializer=tf.zeros_initializer())
-          # x has size [-1, pbw, pbw, 3]
-          #print("X SHAPE")
-          #print(x.get_shape())
-
-        small_input = tf.transpose(x, [0,3,1,2])
-        small_input = tf.sigmoid(small_input)
-        small_input = tf.cast(small_input, tf.uint8)
-        small_features = tf.import_graph_def(graph_def, input_map={"state_input:0" : small_input}, return_elements=[config.transfer_features + ':0'])[0]
-        with tf.variable_scope(scope):
-          # every convolution with kernel_size=3, stride=1, and padding='valid' will reduce bw by 2
-          # so we need to reduce until size is equal to pbw
-          x = small_features
-          for i in range(pbw, bw, 2):
-            with tf.variable_scope("cd_deconv_layer_%d" % i): # "red" for "reduction"
-              # should we do this?
-              #if i == bw - 2: # the last layer
-              #  k = 3 # the number of channels for board state
-              x = tf.layers.conv2d_transpose(
-                            inputs=x, 
-                            filters=k, 
-                            kernel_size=3,
-                            strides=1,
-                            padding='valid',
-                            activation=tf.nn.relu,
-                            bias_initializer=tf.zeros_initializer())
-          
-
-            
-            
-          board_rep = tf.concat([x, board_rep], axis=3)
-
-        # now, continue the policy network convolution on the board rep
-        with tf.variable_scope(scope):
-          x = board_rep
-          for i in range(self.config.conv_layers_before_transfer, self.config.total_conv_layers):
-            kernel_size = 5 if i == 1 else 3 # this line isn't really necessary here
-            with tf.variable_scope("layer_%d" % i):
-              x = tf.layers.conv2d(
-                            inputs=x, 
-                            filters=k, 
-                            kernel_size=kernel_size,
-                            strides=1,
-                            padding='same',
-                            activation=tf.nn.relu,
-                            bias_initializer=tf.zeros_initializer())
-               
-        x = tf.identity(x, name='final_features') # for transfer learning
-
-        return x
+        next_layer = tf.identity(next_layer, name="final_features")
+        return next_layer
 
 
     def _add_output_layers(self, inpt, scope):
@@ -299,7 +162,7 @@ class CompositeNetwork(BasicNetwork):
                             num_outputs=1, 
                             kernel_size=1,
                             stride=1)
-            # x has shape [batch_size, bw, bw, 1], so reshape to [batch_size, bw**2]
+            # x has shape [batch_size, board_width, board_width, 1], so reshape to [batch_size, board_width**2]
             x = tf.reshape(x, [-1, self.config.board_size**2]) 
           
             # apply different bias to each position
@@ -346,13 +209,73 @@ class CompositeNetwork(BasicNetwork):
         self.train_op = optimizer.apply_gradients(grads_var_list)
         self.grad_norm = tf.global_norm(grads)
 
+    def restore(self, savepoint):
+        self.saver.restore(self.sess, savepoint)
+        
+
+    def play(self):
+        """
+        Lets us play against the network
+        """
+
+        # initialize replay buffer and variables
+
+        # per episode training loop
+        while True:
+            # variables for this episode
+            state = self.env.reset()
+            color = input("What color would you like to play as? (w/b):")
+            opponent_moves_first = (color == 'w')
+            if opponent_moves_first:
+              print("You are playing as white.")
+            else:
+              print("You are playing as black.")
+
+            # If our agent should play as white, let the oponent make a move!
+            # We know that the game won't end in one move, so don't worry about that!
+            if opponent_moves_first:
+                # Let the opponent make a move
+                player = self.env.state.color
+                player_perspective_board = self._board_from_player_perspective(state,player)
+                best_action, _, _ = self.get_best_valid_action(player_perspective_board)
+                state, _, _, _ = self.env.step(best_action)
+              
+            # per action training loop
+            while True:
+                self.env.render()
+
+                actions = range(25)
+                action = -1
+                while not action in actions:
+                  action = int(input("Input action (number 0 to 24):"))
+
+                # perform action in env, and remember if the player just managed to loose the game
+                new_state, _, you_lost, _ = self.env.step(action)
+
+                print("Board after your move:")
+                self.env.render()
+
+                # if the game hasn't ended, let the opponent move
+                if not you_lost:
+                    player = self.env.state.color
+                    player_perspective_board = self._board_from_player_perspective(new_state,player)
+                    best_action, _, _ = self.get_best_valid_action(player_perspective_board)
+                    state, _, you_won, _ = self.env.step(best_action)
+                    if you_won:
+                      print("You win!")
+                      break
+                else:
+                    print("You lose...")
+                    break
+
+
 
 """
 Some testing :)
 """
 if __name__ == '__main__':
     # Grab the test config
-    config = policy.configs.compositeConfig
+    config = policy.configs.bntconfig
 
     # exploration strategy
     exp_schedule = LinearExploration(config.eps_begin, config.eps_end, config.eps_nsteps)
@@ -361,8 +284,10 @@ if __name__ == '__main__':
     lr_schedule  = LinearSchedule(config.lr_begin, config.lr_end, config.lr_nsteps)
 
     # train model
-    model = CompositeNetwork(config)
-    model.run(exp_schedule, lr_schedule)
+    model = BasicNetwork(config)
+    model.initialize()
+    model.restore('results/5x5.v10/checkpoints/99417')
+    model.play()
 
 
 
