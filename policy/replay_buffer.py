@@ -61,6 +61,10 @@ class ReplayBuffer(object):
             sarses: A numpy ndarray of shape (-1,_sars_size) to be pushed onto the end of the queue
         """
         sarses_len = sarses.shape[0]
+        if sarses_len > self._size:
+          sarses = sarses[-self._size:]
+          sarses_len = self._size
+        
         self._queue[-sarses_len:] = sarses
         
 
@@ -380,5 +384,24 @@ if __name__ == "__main__":
     print("\n"  )
     print("Intrnal queue (check is of length 3):")
     print(rb._queue)
+
+    print("Checking if we can add longer than size:")
+    ss = []
+    aa = []
+    vv = []
+    for i in range(3*8+1):
+        s = np.array([[[i,i],
+                       [i,i]],
+                      [[i,i],
+                       [i,i]],
+                      [[i,i],
+                       [i,i]]])
+        a = np.array([i])
+        v = np.array([-1.0] if i != 1 else [1.0])
+        ss.append(s)
+        aa.append(a)
+        vv.append(v)
+    rb.store_example_batch(ss, aa, vv)
+
 
 
